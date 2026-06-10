@@ -98,14 +98,47 @@ This means:
 | Plot methods | Separate `ecog_sn_analysis.m` | Embedded (`plot_timecourse`, `plot_barplot`) |
 | Anatomy optional | No | Yes (gracefully degrades without anatomy) |
 
-### Key improvements in `ecog_data` vs `ecog_data_v2`
+### Features ported FROM `ecog_data_v2` INTO `brainstorm_pipeline/ecog_data.m`
 
-1. `extract_shanks()` — fixed to operate only on clean channels, avoiding
-   label-parse failures on reference or bad channels
-2. `combine_data_files()` — explicit per-segment sample offset instead of a
-   shared global offset; fixes multi-block session alignment
-3. `reference_signal()` — full inline bipolar referencing (no separate script)
-4. `get_summary_statistics()` — anatomy is optional (works without `add_anatomy`)
+These methods existed in `ecog_data_v2` but were absent in the original shared
+iEEG pipeline code. They have all been added to `brainstorm_pipeline/ecog_data.m`:
+
+| Method | Purpose |
+|--------|---------|
+| `stats` property | Struct that accumulates all analysis outputs |
+| `get_cond_id()` | Returns a logical row vector of trial indices for a condition |
+| `extract_trial_epochs()` | 3-D `[nChans × nTrials × nSamples]` epoch extraction (used for normalization and significance) |
+| `extract_normalization_metrics()` | Computes per-channel `[mean, std]` from fixation/baseline epochs; stores in `obj.stats.normMetrics` |
+| `normalize_signal()` | Normalizes `elec_data` and `bip_elec_data` using those metrics; 6 methods: `z-score`, `mean-sub`, `perc-change`, `ratio`, `log-ratio`, `norm` |
+| `extract_time_significance()` | Cluster-permutation test at every time point; results in `obj.stats.time_series.pSigChan` |
+| `extract_significant_channel()` | Per-channel permutation test (epoch > baseline power) + FDR correction; results in `obj.stats.sig_hg_channel` |
+| `doNapLabFilterExtraction` | Third high-gamma extraction method via NAPLAB Columbia filterbank (`naplab_filterbank` static method); alternative to Chang-lab Gaussian |
+
+External dependencies for the stats methods (already in this repo):
+- `remove_bad_trials`, `extractCommonTrials`, `extendTimeEpoch`, `timePermCluster` — `kumar_ieeg_utils/`
+- `fdr_bh` — `fdr_bh/`
+
+### Other improvements in `brainstorm_pipeline/ecog_data.m` vs `ecog_data_v2`
+
+1. `extract_shanks()` — operates only on clean channels (avoids label-parse failures on reference/excluded contacts)
+2. `combine_data_files()` — explicit per-segment sample offset (fixes multi-block alignment)
+3. `reference_signal()` — full inline bipolar referencing (no separate script needed)
+4. `get_summary_statistics()` (in `ecog_sn_data`) — anatomy is optional
+
+### 50 Hz vs 60 Hz line noise
+
+| Setting | `brainstorm_pipeline/ecog_data.m` | `ecog_data_v2` |
+|---------|----------------------------------|----------------|
+| Notch filter harmonics | 50, 100, 150, 200, 250 Hz (European/Chinese standard) | 60, 120, 180, 240 Hz (US standard) |
+| Peak filter (noise QC) | 45, 50, 55 Hz | 55, 60, 65 Hz |
+
+**If your recordings were made in a 60 Hz country (US), edit `define_parameters()` in
+`brainstorm_pipeline/ecog_data.m`:**
+
+```matlab
+param.notch.fcenter = [60, 120, 180, 240];  % US line noise
+param.peak.fcenter  = [55, 60, 65];
+```
 
 ---
 

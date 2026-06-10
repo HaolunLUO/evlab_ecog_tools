@@ -56,6 +56,11 @@ properties
 
     %% ---- ANATOMY ----
     anatomy
+
+    %% ---- STATS ----
+    % Populated by extract_normalization_metrics(), extract_time_significance(),
+    % and extract_significant_channel().
+    stats
     
 end
 
@@ -207,6 +212,7 @@ methods
                  'BipolarReferencing',...
                  'GaussianFilterExtraction',...
                  'BandpassExtraction',...
+                 'NapLabFilterExtraction',...
                  'zscore',...
                  'downsample',...
                  'removeOutliers'...
@@ -219,6 +225,7 @@ methods
                      'reference_signal',...
                      'reference_signal',...
                      'reference_signal',...
+                     'extract_high_gamma',...
                      'extract_high_gamma',...
                      'extract_high_gamma',...
                      'zscore_signal',...
@@ -669,11 +676,15 @@ methods
         p = inputParser();
         addParameter(p,'doGaussianFilterExtraction',false);
         addParameter(p,'doBandpassExtraction',false);
+        % NAPLAB/Columbia filterbank — alternative to Chang-lab Gaussian method.
+        % Calls CUprocessingHilbertTransform_filterbankGUI (embedded below).
+        addParameter(p,'doNapLabFilterExtraction',false);
         parse(p, varargin{:});
         ops = p.Results;
 
-        if ops.doGaussianFilterExtraction == ops.doBandpassExtraction
-            error('Must specify one - and only one - method for extracting the high gamma signal')
+        nMethods = ops.doGaussianFilterExtraction + ops.doBandpassExtraction + ops.doNapLabFilterExtraction;
+        if nMethods ~= 1
+            error('Must specify exactly one extraction method (doGaussianFilterExtraction, doBandpassExtraction, or doNapLabFilterExtraction).')
         end
 
         signal = obj.elec_data';
@@ -742,6 +753,30 @@ methods
                     signal_hilbert_bipolar = filtfilt(B,A,double(signal_bipolar_));
                     signal_hilbert_bipolar = abs(hilbert(signal_hilbert_bipolar));
                     signal_hilbert_bipolar(signal_hilbert_bipolar < 0) = 0;
+                    signal_bipolar(obj.stitch_index(k):stop,:) = signal_hilbert_bipolar;
+                end
+
+            % ----------------------------------------------------------
+            % NAPLAB / COLUMBIA UNIVERSITY FILTERBANK
+            % Log-spaced Gaussian filterbank from the Neural Acoustic
+            % Processing Lab, Columbia University (naplab.ee.columbia.edu).
+            % Identical in design philosophy to the Chang-lab method but
+            % with octave spacing of 1/7 and slightly different sigma.
+            % ----------------------------------------------------------
+            elseif ops.doNapLabFilterExtraction
+                freqRange = [obj.for_preproc.filter_params.bandpass.f_gamma_low, ...
+                             obj.for_preproc.filter_params.bandpass.f_gamma_high];
+
+                fprintf(1, '\n>> Extracting unipolar high gamma (NAPLAB filterbank) \n');
+                [dh,~,~] = ecog_data.naplab_filterbank(signal_', obj.sample_freq, freqRange);
+                signal_hilbert = mean(abs(dh), 3)';
+                signal(obj.stitch_index(k):stop,:) = signal_hilbert;
+
+                if ~isempty(obj.bip_elec_data)
+                    fprintf(1, '\n>> Extracting bipolar high gamma (NAPLAB filterbank) \n');
+                    signal_bipolar_ = signal_bipolar(obj.stitch_index(k):stop,:);
+                    [dh_bip,~,~] = ecog_data.naplab_filterbank(signal_bipolar_', obj.sample_freq, freqRange);
+                    signal_hilbert_bipolar = mean(abs(dh_bip), 3)';
                     signal_bipolar(obj.stitch_index(k):stop,:) = signal_hilbert_bipolar;
                 end
             end
@@ -1729,6 +1764,288 @@ methods
 
     %%
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    % GET CONDITION IDs (logical index vector)
+    % Returns a logical row vector, one entry per trial.
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    function cond_id = get_cond_id(obj, condition, varargin)
+        p = inputParser();
+        addParameter(p,'keep_trials',[]);
+        parse(p, varargin{:});
+        ops = p.Results;
+
+        if ~isempty(ops.keep_trials)
+            assert(length(obj.condition)==length(ops.keep_trials));
+            cond_id = cell2mat(arrayfun(@(x) (strcmp(obj.condition{x},condition) && ops.keep_trials(x)),...
+                               1:length(obj.condition),'UniformOutput',false));
+        else
+            cond_id = cell2mat(arrayfun(@(x) strcmp(obj.condition{x},condition),...
+                               1:length(obj.condition),'UniformOutput',false));
+        end
+    end
+
+
+    %%
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    % EXTRACT TRIAL EPOCHS
+    % Returns a 3-D array [nChans x nTrials x nSamples].
+    % Unlike make_trials() (which uses a cell-table format), this method
+    % is designed for downstream normalization and significance testing.
+    %
+    %   epoch_tw        - [start stop] in seconds relative to event onset
+    %   key             - event key to align to (default 'fix')
+    %   selectChannels  - channel indices to extract (default: all)
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    function [trial_data_epoch, trial_bip_data_epoch] = extract_trial_epochs(obj, varargin)
+        p = inputParser();
+        addParameter(p,'epoch_tw',  [-0.5 3]);
+        addParameter(p,'key',       'fix');
+        addParameter(p,'selectChannels', 1:size(obj.elec_data,1));
+        parse(p, varargin{:});
+        ops = p.Results;
+
+        epoch_tw_samples = round(ops.epoch_tw .* obj.sample_freq);
+
+        fprintf(1, '\n> Cutting signal into trial epochs ... \n');
+        fprintf(1,'[');
+        trial_bip_data_epoch = [];
+        trial_data_epoch     = [];
+
+        for k = 1:size(obj.trial_timing,1)
+            trial_time_tbl = obj.trial_timing{k};
+            probe_key = find(ismember(trial_time_tbl.key, ops.key));
+            assert(length(probe_key)==1, 'Key ''%s'' not found or not unique in trial %d', ops.key, k);
+
+            t_start = trial_time_tbl(probe_key,:).start + epoch_tw_samples(1);
+            t_stop  = trial_time_tbl(probe_key,:).start + epoch_tw_samples(2);
+
+            trial_data_epoch(:,k,:) = obj.elec_data(ops.selectChannels, t_start:t_stop);
+
+            if ~isempty(obj.bip_elec_data)
+                trial_bip_data_epoch(:,k,:) = obj.bip_elec_data(:, t_start:t_stop);
+            end
+
+            fprintf(1,'.');
+        end
+        fprintf(1,'] done\n');
+    end
+
+
+    %%
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    % EXTRACT NORMALIZATION METRICS
+    % Computes per-channel [mean, std] from fixation/baseline epochs and
+    % stores the result in obj.stats.normMetrics.
+    %
+    % Requires kumar_ieeg_utils/ (remove_bad_trials, extractCommonTrials)
+    % to be on the MATLAB path.
+    %
+    %   baseTimeRange   - [start stop] seconds for baseline window (default [-0.5 0])
+    %   timepad         - extra seconds added either side before epoch extraction
+    %   key             - event key that marks baseline onset (default 'fix')
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    function extract_normalization_metrics(obj, varargin)
+        p = inputParser();
+        addParameter(p,'baseTimeRange', [-0.5 0]);
+        addParameter(p,'timepad',       0.5);
+        addParameter(p,'key',           'fix');
+        parse(p, varargin{:});
+        ops = p.Results;
+
+        baseTimeExtract = [ops.baseTimeRange(1)-ops.timepad, ...
+                           ops.baseTimeRange(2)+ops.timepad];
+
+        [baseData, baseData_bip] = obj.extract_trial_epochs(...
+            'epoch_tw', baseTimeExtract, 'key', ops.key);
+
+        [~, goodtrials]  = remove_bad_trials(baseData);
+        goodTrialsCommon = extractCommonTrials(goodtrials);
+
+        fprintf(1, '\n>> Extracting normalization metrics (unipolar) \n');
+        fprintf(1,'[');
+        normFactor = zeros(size(baseData,1), 2);
+        for iChan = 1:size(baseData,1)
+            slice = squeeze(baseData(iChan, goodTrialsCommon, :));
+            normFactor(iChan,:) = [mean(slice(:)), std(slice(:))];
+            fprintf(1,'.');
+        end
+        fprintf(1,'] done\n');
+        normMetrics.normFactor = normFactor;
+
+        if ~isempty(baseData_bip)
+            fprintf(1, '\n>> Extracting normalization metrics (bipolar) \n');
+            fprintf(1,'[');
+            [~, goodtrials_bip]  = remove_bad_trials(baseData_bip);
+            goodTrialsCommon_bip = extractCommonTrials(goodtrials_bip);
+            normFactor_bip = zeros(size(baseData_bip,1), 2);
+            for iChan = 1:size(baseData_bip,1)
+                slice = squeeze(baseData_bip(iChan, goodTrialsCommon_bip, :));
+                normFactor_bip(iChan,:) = [mean(slice(:)), std(slice(:))];
+                fprintf(1,'.');
+            end
+            fprintf(1,'] done\n');
+            normMetrics.normFactor_bip = normFactor_bip;
+        end
+
+        obj.stats.normMetrics = normMetrics;
+    end
+
+
+    %%
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    % NORMALIZE SIGNAL
+    % Applies a normalization method to obj.elec_data (and bip_elec_data)
+    % using metrics computed by extract_normalization_metrics().
+    %
+    %   normtype - one of:
+    %     'z-score'    (x - mean) / std             (default)
+    %     'mean-sub'   (x - mean)
+    %     'perc-change'(x - mean) / mean
+    %     'ratio'       x / mean
+    %     'log-ratio'  10*log10(x / mean)
+    %     'norm'       (x - mean) / (x + mean)
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    function normalize_signal(obj, varargin)
+        p = inputParser();
+        addParameter(p,'normtype','z-score');
+        parse(p, varargin{:});
+        ops = p.Results;
+
+        if ~isfield(obj.stats,'normMetrics')
+            obj.extract_normalization_metrics();
+        end
+        nM = obj.stats.normMetrics;
+
+        obj.elec_data = ecog_data.apply_norm_static(obj.elec_data, nM.normFactor, ops.normtype);
+
+        if ~isempty(obj.bip_elec_data) && isfield(nM,'normFactor_bip')
+            obj.bip_elec_data = ecog_data.apply_norm_static(obj.bip_elec_data, nM.normFactor_bip, ops.normtype);
+        end
+    end
+
+
+    %%
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    % EXTRACT TIME SIGNIFICANCE
+    % Runs permutation cluster test at every time point for every channel.
+    % Results stored in obj.stats.time_series.pSigChan (and _bip).
+    %
+    % Requires kumar_ieeg_utils/ on the MATLAB path:
+    %   timePermCluster, extendTimeEpoch
+    %
+    %   baseTime  - [start stop] seconds for baseline window
+    %   epochTime - [start stop] seconds for analysis window
+    %   p_val     - significance threshold (default 0.05)
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    function extract_time_significance(obj, varargin)
+        p = inputParser();
+        addParameter(p,'baseTime',  [-0.5 0]);
+        addParameter(p,'epochTime', [-0.5 6]);
+        addParameter(p,'numPerm',   10000);
+        addParameter(p,'p_val',     0.05);
+        parse(p, varargin{:});
+        ops = p.Results;
+
+        [baseData,  baseData_bip]  = obj.extract_trial_epochs('epoch_tw', ops.baseTime);
+        [epochData, epochData_bip] = obj.extract_trial_epochs('epoch_tw', ops.epochTime);
+
+        baseDataExtend     = extendTimeEpoch(baseData,     size(epochData,3));
+        baseData_bip_Ext   = extendTimeEpoch(baseData_bip, size(epochData,3));
+
+        fprintf(1,'\n>> Permutation cluster test — unipolar (%d channels) ...\n', size(baseDataExtend,1));
+        pSigChan = cell(1, size(baseDataExtend,1));
+        parfor iChan = 1:size(baseDataExtend,1)
+            aSig = squeeze(epochData(iChan,:,:));
+            bSig = squeeze(baseDataExtend(iChan,:,:));
+            pSigChan{iChan} = timePermCluster(aSig, bSig, 'pThresh', ops.p_val);
+        end
+
+        pSigChan_bip = {};
+        if ~isempty(epochData_bip)
+            fprintf(1,'\n>> Permutation cluster test — bipolar (%d channels) ...\n', size(baseData_bip_Ext,1));
+            pSigChan_bip = cell(1, size(baseData_bip_Ext,1));
+            parfor iChan = 1:size(baseData_bip_Ext,1)
+                aSig = squeeze(epochData_bip(iChan,:,:));
+                bSig = squeeze(baseData_bip_Ext(iChan,:,:));
+                pSigChan_bip{iChan} = timePermCluster(aSig, bSig, 'pThresh', ops.p_val);
+            end
+        end
+
+        obj.stats.time_series.pSigChan     = pSigChan;
+        obj.stats.time_series.pSigChan_bip = pSigChan_bip;
+    end
+
+
+    %%
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    % EXTRACT SIGNIFICANT CHANNELS
+    % One-sided permutation test (epoch power > baseline power) per
+    % channel, then FDR correction.
+    % Results stored in obj.stats.sig_hg_channel.
+    %
+    % Requires on MATLAB path:
+    %   remove_bad_trials  (kumar_ieeg_utils/)
+    %   fdr_bh             (fdr_bh/)
+    %
+    %   baseTime  - [start stop] seconds baseline window
+    %   epochTime - [start stop] seconds analysis window
+    %   numPerm   - permutation count (default 10000)
+    %   p_val     - threshold (default 0.05)
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    function extract_significant_channel(obj, varargin)
+        p = inputParser();
+        addParameter(p,'baseTime',  [-0.5 0]);
+        addParameter(p,'epochTime', [0 0.5]);
+        addParameter(p,'numPerm',   10000);
+        addParameter(p,'p_val',     0.05);
+        parse(p, varargin{:});
+        ops = p.Results;
+
+        [baseData,  baseData_bip]  = obj.extract_trial_epochs('epoch_tw', ops.baseTime);
+        [epochData, epochData_bip] = obj.extract_trial_epochs('epoch_tw', ops.epochTime);
+
+        basePower  = mean(baseData.^2,  3);
+        epochPower = mean(epochData.^2, 3);
+
+        fprintf(1, '\n>> Extracting significant channels (unipolar) ...\n');
+        fprintf(1,'[');
+        [~, goodtrials] = remove_bad_trials(epochData);
+        pSig.pChan = zeros(1, size(basePower,1));
+        for iChan = 1:size(basePower,1)
+            pSig.pChan(iChan) = ecog_data.local_permtest(...
+                epochPower(iChan, goodtrials(iChan,:)), ...
+                basePower(iChan,  goodtrials(iChan,:)), ...
+                ops.numPerm);
+            fprintf(1,'.');
+        end
+        fprintf(1,'] done\n');
+        pSig.h_fdr_05 = fdr_bh(pSig.pChan, 0.05);
+        pSig.h_fdr_01 = fdr_bh(pSig.pChan, 0.01);
+
+        if ~isempty(epochData_bip)
+            basePower_bip  = mean(baseData_bip.^2,  3);
+            epochPower_bip = mean(epochData_bip.^2, 3);
+            fprintf(1, '\n>> Extracting significant channels (bipolar) ...\n');
+            fprintf(1,'[');
+            [~, goodtrials_bip] = remove_bad_trials(epochData_bip);
+            pSig.pChan_bip = zeros(1, size(basePower_bip,1));
+            for iChan = 1:size(basePower_bip,1)
+                pSig.pChan_bip(iChan) = ecog_data.local_permtest(...
+                    epochPower_bip(iChan, goodtrials_bip(iChan,:)), ...
+                    basePower_bip(iChan,  goodtrials_bip(iChan,:)), ...
+                    ops.numPerm);
+                fprintf(1,'.');
+            end
+            fprintf(1,'] done\n');
+            pSig.h_bip_fdr_05 = fdr_bh(pSig.pChan_bip, 0.05);
+            pSig.h_bip_fdr_01 = fdr_bh(pSig.pChan_bip, 0.01);
+        end
+
+        obj.stats.sig_hg_channel = pSig;
+    end
+
+
+    %%
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     % PLOT CHANNELS
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     function plot_channels(obj,varargin)
@@ -1827,7 +2144,150 @@ methods
     end
 
     
-end
+end % end methods block
 
 
-end
+methods (Static)
+
+    %%
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    % NAPLAB FILTERBANK  (static — can also be called standalone)
+    %
+    %   [filteredData, cfs, sigma_fs] = ecog_data.naplab_filterbank(d, Fs, freqRange)
+    %
+    %   d          - [nChans x nSamples]  input signal
+    %   Fs         - sampling rate (Hz)
+    %   freqRange  - [fLow fHigh] (Hz), default [70 150]
+    %
+    %   filteredData - [nChans x nSamples x nBands]  complex analytic signal
+    %   cfs          - [1 x nBands]  center frequencies (Hz)
+    %   sigma_fs     - [1 x nBands]  Gaussian sigma (Hz)
+    %
+    % Source: Neural Acoustic Processing Lab, Columbia University
+    %         naplab.ee.columbia.edu
+    %         Embedded here to avoid external dependency.
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    %%
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    % ONE-SIDED PERMUTATION TEST  (static helper for extract_significant_channel)
+    %
+    %   p = ecog_data.local_permtest(sample1, sample2, numperm)
+    %
+    %   Tests H0: mean(sample1) <= mean(sample2).
+    %   Returns proportion of shuffled differences exceeding observed difference.
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    %%
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    % APPLY NORMALIZATION  (static helper for normalize_signal)
+    %
+    %   data = ecog_data.apply_norm_static(data, fac, normtype)
+    %
+    %   data     - [nChans x nSamples]
+    %   fac      - [nChans x 2]  columns: [mean, std]
+    %   normtype - one of: 'z-score','mean-sub','perc-change','ratio',
+    %                      'log-ratio','norm'
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    function data = apply_norm_static(data, fac, normtype)
+        mu  = fac(:,1);
+        sig = fac(:,2);
+        switch normtype
+            case 'z-score'
+                data = (data - mu) ./ sig;
+            case 'mean-sub'
+                data = data - mu;
+            case 'perc-change'
+                data = (data - mu) ./ mu;
+            case 'ratio'
+                data = data ./ mu;
+            case 'log-ratio'
+                data = 10 .* log10(data ./ mu);
+            case 'norm'
+                data = (data - mu) ./ (data + mu);
+            otherwise
+                error('ecog_data.normalize_signal: unknown normtype ''%s''', normtype);
+        end
+    end
+
+
+    function p = local_permtest(sample1, sample2, numperm)
+        samples    = [sample1, sample2];
+        samplediff = mean(sample1) - mean(sample2);
+        n1         = length(sample1);
+        diffshuff  = zeros(1, numperm);
+        for n = 1:numperm
+            s = samples(randperm(length(samples)));
+            diffshuff(n) = mean(s(1:n1)) - mean(s(n1+1:end));
+        end
+        p = sum(diffshuff > samplediff) / numperm;
+    end
+
+
+    function [filteredData, cfs, sigma_fs] = naplab_filterbank(d, Fs, freqRange)
+        if nargin < 3 || isempty(freqRange)
+            freqRange = [70 150];
+        end
+
+        a = [log10(.39); .5];
+        f0       = 0.018;
+        octspace = 1/7;
+        minf = freqRange(1);
+        maxf = freqRange(2);
+        maxfo = log2(maxf/f0);
+
+        cfs = f0;
+        sigma_f = 10^(a(1) + a(2)*log10(cfs(end)));
+
+        while log2(cfs(end)/f0) < maxfo
+            cfo = log2(cfs(end)/f0) + octspace;
+            if cfs(end) < 4
+                cfs = [cfs, cfs(end) + sigma_f];
+            else
+                cfs = [cfs, f0*(2^cfo)];
+            end
+            sigma_f = 10^(a(1) + a(2)*log10(cfs(end)));
+        end
+
+        cfs = cfs(cfs >= minf & cfs <= maxf);
+        npbs = length(cfs);
+        sigma_fs = (10.^([ones(length(cfs),1), log10(cfs')]*a))';
+
+        % Remove problematic frequency bands near power-line harmonics
+        badfs    = [find(cfs>340 & cfs<480), find(cfs>720 & cfs<890)];
+        sigma_fs = sigma_fs(setdiff(1:npbs, badfs));
+        cfs      = cfs(setdiff(1:npbs, badfs));
+        npbs     = length(cfs);
+        sds      = sigma_fs .* sqrt(2);
+
+        T      = size(d, 2);
+        freqs  = (0:floor(T/2)) .* (Fs/T);
+        nfreqs = length(freqs);
+
+        % One-sided spectrum (Hilbert convention)
+        h = zeros(1, T);
+        if mod(T,2) == 0
+            h([1, T/2+1]) = 1;
+            h(2:T/2) = 2;
+        else
+            h(1) = 1;
+            h(2:(T+1)/2) = 2;
+        end
+
+        filteredData = zeros(size(d,1), T, npbs);
+        for c = 1:size(d,1)
+            adat = fft(d(c,:), T);
+            for f = 1:npbs
+                H = zeros(1, T);
+                k_vec = freqs - cfs(f);
+                H(1:nfreqs) = exp((-0.5) .* ((k_vec ./ sds(f)).^2));
+                H(nfreqs+1:end) = fliplr(H(2:ceil(T/2)));
+                H(1) = 0;
+                filteredData(c,:,f) = ifft(adat .* (H .* h), T);
+            end
+        end
+        filteredData = abs(filteredData);
+    end
+
+end % end static methods block
+
+
+end % end classdef
