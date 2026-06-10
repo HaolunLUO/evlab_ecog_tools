@@ -2008,7 +2008,7 @@ methods
 
         fprintf(1,'\n>> Permutation cluster test — unipolar (%d channels) ...\n', size(baseDataExtend,1));
         pSigChan = cell(1, size(baseDataExtend,1));
-        parfor iChan = 1:size(baseDataExtend,1)
+        parfor (iChan = 1:size(baseDataExtend,1), 8)
             aSig = squeeze(epochData(iChan,:,:));
             bSig = squeeze(baseDataExtend(iChan,:,:));
             pSigChan{iChan} = timePermCluster(aSig, bSig, 'pThresh', ops.p_val);
@@ -2018,7 +2018,7 @@ methods
         if ~isempty(epochData_bip)
             fprintf(1,'\n>> Permutation cluster test — bipolar (%d channels) ...\n', size(baseData_bip_Ext,1));
             pSigChan_bip = cell(1, size(baseData_bip_Ext,1));
-            parfor iChan = 1:size(baseData_bip_Ext,1)
+            parfor (iChan = 1:size(baseData_bip_Ext,1), 8)
                 aSig = squeeze(epochData_bip(iChan,:,:));
                 bSig = squeeze(baseData_bip_Ext(iChan,:,:));
                 pSigChan_bip{iChan} = timePermCluster(aSig, bSig, 'pThresh', ops.p_val);
