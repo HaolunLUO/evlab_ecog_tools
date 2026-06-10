@@ -329,6 +329,22 @@ fprintf('Output directory: %s\n', sn_obj.langloc_save_path);
 
 
 %% ========================================================================
+% STEP 7.5: BASELINE Z-SCORE
+%% ========================================================================
+fprintf('\n=== STEP 7.5: BASELINE Z-SCORE ===\n');
+
+% Compute per-channel mean and std from fixation (baseline) periods,
+% then apply (x - baseline_mean) / baseline_std to the continuous signal.
+% Trials are rebuilt afterward so all downstream steps use the
+% baseline-normalized high-gamma signal.
+sn_obj.extract_normalization_metrics();
+sn_obj.normalize_signal('normtype', 'z-score');
+sn_obj.make_trials();
+
+fprintf('Baseline z-score applied. Trials rebuilt.\n');
+
+
+%% ========================================================================
 % STEP 8: LOCALIZE (source task) OR APPLY ROI (other tasks)
 %% ========================================================================
 fprintf('\n=== STEP 8: S vs N / ROI ===\n');
