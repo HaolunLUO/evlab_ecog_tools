@@ -354,11 +354,16 @@ fprintf('Output directory: %s\n', sn_obj.langloc_save_path);
 %% ========================================================================
 fprintf('\n=== STEP 7.5: BASELINE Z-SCORE ===\n');
 
-% Compute per-channel mean and std from fixation (baseline) periods,
-% then apply (x - baseline_mean) / baseline_std to the continuous signal.
-% Trials are rebuilt afterward so all downstream steps use the
+% Compute per-channel mean and std from the pre-trial fixation (baseline)
+% period, then apply (x - baseline_mean) / baseline_std to the continuous
+% signal. Trials are rebuilt afterward so all downstream steps use the
 % baseline-normalized high-gamma signal.
-sn_obj.extract_normalization_metrics();
+%
+% The brainstorm-derived trial_timing tables only contain word-onset keys
+% ('word_1', 'word_2', ...), with no explicit 'fix' marker. Anchor the
+% baseline to the first word ('word_1'); the default baseTimeRange of
+% [-0.5 0] therefore captures the 500 ms fixation period before word onset.
+sn_obj.extract_normalization_metrics(key = 'word_1');
 sn_obj.normalize_signal('normtype', 'z-score');
 sn_obj.make_trials();
 
