@@ -46,7 +46,7 @@ useROIfromSource = false;
 roiSourceTask    = 'MITSWJNTask';
 
 % --- Re-run control ---
-forceRebuildCrunched = false;
+forceRebuildCrunched = true;
 forceReprocess       = true;
 
 % --- UI control ---
