@@ -604,6 +604,159 @@ methods
         obj.for_preproc.outlier         = outlier;
     end
 
+
+    %%
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    % TRIAL / CONDITION HELPERS
+    %
+    % These override the ecog_data_v2 versions, which are validated against
+    % the legacy `ecog_data` class (so they reject an ecog_data_v2 subclass)
+    % and/or assume numeric condition codes. The versions below accept string
+    % condition flags (e.g. 'SENTENCES') and the plural 'words' name-value
+    % used by the S-vs-N analysis layer.
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    function cond_data=get_cond_resp(obj,condition,varargin)
+        p = inputParser();
+        addParameter(p,'keep_trials',[]);
+        parse(p, varargin{:});
+        ops = p.Results;
+
+        if isempty(obj.trial_data)
+            obj.make_trials();
+        end
+
+        if ~isempty(ops.keep_trials)
+            assert(length(obj.condition)==length(ops.keep_trials));
+            cond_id = find(cell2mat(arrayfun(@(x) (strcmp(obj.condition{x},condition) && ops.keep_trials(x)),1:length(obj.condition),'UniformOutput',false)));
+        else
+            cond_id = find(cell2mat(arrayfun(@(x) strcmp(obj.condition{x},condition),1:length(obj.condition),'UniformOutput',false)));
+        end
+
+        cond_data = obj.trial_data(cond_id);
+    end
+
+
+    function cond_id = get_cond_id(obj, condition, varargin)
+        % Returns a logical row vector, one entry per trial.
+        p = inputParser();
+        addParameter(p,'keep_trials',[]);
+        parse(p, varargin{:});
+        ops = p.Results;
+
+        if ~isempty(ops.keep_trials)
+            assert(length(obj.condition)==length(ops.keep_trials));
+            cond_id = cell2mat(arrayfun(@(x) (strcmp(obj.condition{x},condition) && ops.keep_trials(x)),...
+                               1:length(obj.condition),'UniformOutput',false));
+        else
+            cond_id = cell2mat(arrayfun(@(x) strcmp(obj.condition{x},condition),...
+                               1:length(obj.condition),'UniformOutput',false));
+        end
+    end
+
+
+    function output_d=get_value(obj,input_d,varargin)
+        p = inputParser();
+        addParameter(p, 'key', 'word');
+        addParameter(p, 'type', 'match');
+        parse(p, varargin{:});
+        ops = p.Results;
+
+        if strcmp(ops.type,'match')
+            func = @(x,y) ismember(x,y);
+        else
+            func = @(x,y) contains(x,y);
+        end
+
+        output_d = input_d;
+        for k = 1:size(input_d,1)
+            B = input_d{k};
+            output_d{k} = B(func(B.key,ops.key),:);
+        end
+    end
+
+
+    function [output_tbl,cond_table]=get_ave_cond_trial(obj,varargin)
+        % Averages signal for a given condition across selected words.
+        p = inputParser();
+        addParameter(p,'words',1:8);
+        addParameter(p,'condition',[]);
+        addParameter(p,'keep_trials',[])
+        parse(p, varargin{:});
+        ops = p.Results;
+
+        func = @(x) cell2mat(permute(x,[3,2,1]));
+
+        if ops.condition
+            condition_flag = ops.condition;
+            cond_data = obj.get_cond_resp(condition_flag,'keep_trials',ops.keep_trials);
+        else
+            if isempty(obj.trial_data)
+                obj.make_trials();
+            end
+            condition_flag = 'all';
+            cond_data = obj.trial_data;
+        end
+
+        cond_data_ave = obj.get_average(cond_data);
+        word_data = obj.get_value(cond_data_ave,'key','word','type','contain');
+
+        B = obj.combine_trial_cond(word_data);
+        [keys,strings,values] = obj.get_columns(B); %#ok<ASGLU>
+        values_comb = cellfun(@(X) func(values.(X)),values.Properties.VariableNames,'uni',false);
+        cond_table = cell2table(horzcat(condition_flag,{strings.string},values_comb),'VariableNames',B.Properties.VariableNames);
+
+        func_1 = @(x) x{1}(:,:,ops.words);
+        func_2 = @(x) nanmean(x,3);
+
+        B = cond_table;
+        [keys,strings,values] = obj.get_columns(B); %#ok<ASGLU>
+        condition_ave = cellfun(@(X) func_2(func_1(values.(X))),values.Properties.VariableNames,'uni',false);
+
+        output_tbl = cell2table(horzcat(condition_flag,strings.string,condition_ave),'VariableNames',B.Properties.VariableNames);
+    end
+
+
+    %%
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    % EXTRACT TRIAL EPOCHS
+    % Returns a 3-D array [nChans x nTrials x nSamples]. Rounds the epoch
+    % window to whole samples so non-integer windows cannot produce
+    % non-integer indices.
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    function [trial_data_epoch, trial_bip_data_epoch] = extract_trial_epochs(obj, varargin)
+        p = inputParser();
+        addParameter(p,'epoch_tw',  [-0.5 3]);
+        addParameter(p,'key',       'fix');
+        addParameter(p,'selectChannels', 1:size(obj.elec_data,1));
+        parse(p, varargin{:});
+        ops = p.Results;
+
+        epoch_tw_samples = round(ops.epoch_tw .* obj.sample_freq);
+
+        fprintf(1, '\n> Cutting signal into trial epochs ... \n');
+        fprintf(1,'[');
+        trial_bip_data_epoch = [];
+        trial_data_epoch     = [];
+
+        for k = 1:size(obj.trial_timing,1)
+            trial_time_tbl = obj.trial_timing{k};
+            probe_key = find(ismember(trial_time_tbl.key, ops.key));
+            assert(length(probe_key)==1, 'Key ''%s'' not found or not unique in trial %d', ops.key, k);
+
+            t_start = trial_time_tbl(probe_key,:).start + epoch_tw_samples(1);
+            t_stop  = trial_time_tbl(probe_key,:).start + epoch_tw_samples(2);
+
+            trial_data_epoch(:,k,:) = obj.elec_data(ops.selectChannels, t_start:t_stop);
+
+            if ~isempty(obj.bip_elec_data)
+                trial_bip_data_epoch(:,k,:) = obj.bip_elec_data(:, t_start:t_stop);
+            end
+
+            fprintf(1,'.');
+        end
+        fprintf(1,'] done\n');
+    end
+
 end % methods
 
 end % classdef
