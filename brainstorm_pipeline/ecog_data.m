@@ -367,7 +367,8 @@ methods
         obj.for_preproc.notchFilter_results.signal_noise_after_notch = signal_noise_after;
         obj.for_preproc.notchFilter_results.mean_signal_noise_after_notch = mean(signal_noise_after(obj.elec_ch_clean,2));
 
-        fprintf(1,'\nReduced 50 Hz noise from %.2f to %.2f uV\n',mean(signal_noise_before(obj.elec_ch_clean,2)),mean(signal_noise_after(obj.elec_ch_clean,2)));
+        ln_hz = obj.for_preproc.filter_params.line_noise_hz;
+        fprintf(1,'\nReduced %d Hz noise from %.2f to %.2f uV\n', ln_hz, mean(signal_noise_before(obj.elec_ch_clean,2)),mean(signal_noise_after(obj.elec_ch_clean,2)));
         fprintf(1,'Electrodes with significant line noise: ');
         fprintf(1,'%d ', obj.elec_ch_with_noise(:)); fprintf('\n');
 
@@ -392,6 +393,11 @@ methods
         fprintf(1, '\n> Finding electrodes with significant IEDs ... \n');
         
         detectionIEDs = [];
+        % -h 60 : IED-detector bandpass high-frequency cutoff (Hz).
+        %         This is the Janca algorithm's internal signal-processing
+        %         parameter, NOT the line-noise frequency.  Keep at 60 Hz
+        %         even for 50 Hz datasets; IEDs are broadband events and
+        %         50 Hz noise is removed by notch filtering before this step.
         detectionIEDs.settings = '-k1 3.65 -h 60 -dec 200 -dt 0.005 -pt 0.12 -ti 1';
         detectionIEDs.segments = [];
             
@@ -1063,26 +1069,49 @@ methods
     % DEFINE PARAMETERS
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     function define_parameters(obj)
+        % ---------------------------------------------------------------
+        % LINE NOISE STANDARD: 50 Hz  (European / Chinese / Asian)
+        %   peak filter   : [45, 50, 55] Hz  — measures noise power
+        %   notch filter  : 50, 100, 150, 200, 250 Hz — removes harmonics
+        %   Gaussian bank : centres within ±5 Hz of any 50 Hz harmonic
+        %                   that falls inside the gamma band are excluded
+        %
+        % To switch to 60 Hz (US standard) replace:
+        %   param.peak.fcenter  = [55, 60, 65];
+        %   param.notch.fcenter = [60, 120, 180, 240];
+        %   line_noise_hz       = 60;
+        % ---------------------------------------------------------------
         param = struct;
-            
-        param.highpass.Wp = 0.50;
-        param.highpass.Ws = 0.05;
-        param.highpass.Rp = 3;
-        param.highpass.Rs = 30;
-            
-        param.peak.fcenter = [45,50,55];
-        param.peak.bw      = ones(1,length(param.peak.fcenter)).*0.001;
-            
-        param.notch.fcenter = [50:50:250];
-        param.notch.bw = ones(1,length(param.notch.fcenter)).*0.001;
+        param.line_noise_hz = 50;           % <-- single source of truth
 
-        param.gaussian.f_gamma_low = 70;
+        % --- highpass filter ---
+        param.highpass.Wp = 0.50;           % Hz
+        param.highpass.Ws = 0.05;           % Hz
+        param.highpass.Rp = 3;              % dB
+        param.highpass.Rs = 30;             % dB
+
+        % --- IIR peak filter (for line-noise QC measurement) ---
+        % Measures power at {line_noise - 5, line_noise, line_noise + 5} Hz
+        param.peak.fcenter = param.line_noise_hz + [-5, 0, 5];   % [45 50 55]
+        param.peak.bw      = ones(1,3) .* 0.001;
+
+        % --- notch filter: fundamental + harmonics up to Nyquist/2 ---
+        max_notch = min(obj.sample_freq/2 - 50, 250);
+        param.notch.fcenter = param.line_noise_hz : param.line_noise_hz : max_notch;
+        param.notch.bw      = ones(1, length(param.notch.fcenter)) .* 0.001;
+
+        % --- high-gamma band for Gaussian and bandpass extraction ---
+        param.gaussian.f_gamma_low  = 70;
         param.gaussian.f_gamma_high = 150;
 
-        param.bandpass.f_gamma_low = 70;
+        param.bandpass.f_gamma_low  = 70;
         param.bandpass.f_gamma_high = 150;
         param.bandpass.filter_order = 6;
 
+
+        % ----- BUILD FILTERS -----
+
+        % --- highpass ---
         highpass.Wp = param.highpass.Wp/(obj.sample_freq/2); 
         highpass.Ws = param.highpass.Ws/(obj.sample_freq/2);
         highpass.Rp = param.highpass.Rp; 
@@ -1093,21 +1122,40 @@ methods
         [highpass.sos,highpass.g] = zp2sos(highpass.z,highpass.p,highpass.k);
         highpass.h = dfilt.df2sos(highpass.sos,highpass.g);
 
+        % --- IIR peak (noise measurement) ---
         for idx = 1:length(param.peak.fcenter)
             peak{idx}.wo = param.peak.fcenter(idx)/(obj.sample_freq/2);
             peak{idx}.bw = param.peak.bw(idx);  
             [peak{idx}.b,peak{idx}.a] = iirpeak(peak{idx}.wo,peak{idx}.bw);
         end
 
+        % --- notch (line-noise removal) ---
         for idx = 1:length(param.notch.fcenter)
             notch{idx}.wo = param.notch.fcenter(idx)/(obj.sample_freq/2);  
             notch{idx}.bw = param.notch.bw(idx);
             [notch{idx}.b,notch{idx}.a] = iirnotch(notch{idx}.wo,notch{idx}.bw);  
         end 
 
-        [gaussian.cfs,gaussian.sds] = obj.get_filter_param_chang_lab(param.gaussian.f_gamma_low,param.gaussian.f_gamma_high);
-        gaussian.cfs(1) = 73.0;
-        gaussian.f_gamma_low = param.gaussian.f_gamma_low;
+        % --- Chang-lab Gaussian filterbank ---
+        [gaussian.cfs, gaussian.sds] = obj.get_filter_param_chang_lab(...
+            param.gaussian.f_gamma_low, param.gaussian.f_gamma_high);
+
+        % Exclude Gaussian centres within ±5 Hz of any 50 Hz harmonic
+        % that falls inside the gamma band (e.g. 100 Hz for 50 Hz datasets).
+        % This prevents residual line-noise from leaking into the HG envelope.
+        harmonics_in_band = param.line_noise_hz * ...
+            (ceil(param.gaussian.f_gamma_low  / param.line_noise_hz) : ...
+             floor(param.gaussian.f_gamma_high / param.line_noise_hz));
+        bad_bands = false(size(gaussian.cfs));
+        for h = harmonics_in_band
+            bad_bands = bad_bands | (abs(gaussian.cfs - h) < 5);
+        end
+        gaussian.cfs = gaussian.cfs(~bad_bands);
+        gaussian.sds = gaussian.sds(~bad_bands);
+        fprintf(1,'Gaussian filterbank: %d bands (excluded %d near 50 Hz harmonics)\n', ...
+            numel(gaussian.cfs), sum(bad_bands));
+
+        gaussian.f_gamma_low  = param.gaussian.f_gamma_low;
         gaussian.f_gamma_high = param.gaussian.f_gamma_high;
 
         bandpass.h = fdesign.bandpass('N,F3dB1,F3dB2',param.bandpass.filter_order,param.bandpass.f_gamma_low,param.bandpass.f_gamma_high,obj.sample_freq);
@@ -1160,7 +1208,8 @@ methods
     % MEASURE LINE NOISE
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     function signal_noise=measure_line_noise(obj,signal)
-        fprintf(1, '\n> Measuring 50Hz noise power ...\n');
+        ln_hz = obj.for_preproc.filter_params.line_noise_hz;
+        fprintf(1, '\n> Measuring %d Hz noise power ...\n', ln_hz);
         fprintf(1,'[');
         peak = obj.for_preproc.peak;
         signal_noise = zeros(size(signal,2),length(peak));
@@ -1179,7 +1228,11 @@ methods
     % PLOT LINE NOISE
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     function f=plot_line_noise(obj,noise_before,noise_after)
-        fprintf(1, '\n> Plotting 50Hz noise power ...\n');
+        ln_hz  = obj.for_preproc.filter_params.line_noise_hz;
+        lo_hz  = ln_hz - 5;   % peak filter centre - 5 Hz
+        hi_hz  = ln_hz + 5;   % peak filter centre + 5 Hz
+
+        fprintf(1, '\n> Plotting %d Hz noise power ...\n', ln_hz);
         close all
         f = figure;
         set(gcf,'position',[30,30,2300,900]);
@@ -1191,7 +1244,9 @@ methods
         stem(noise_before,'filled'); 
         axis tight; hold on;
         stem(x,noise_before(idxs,:),'filled','Color','k')
-        legend({'45Hz noise','50Hz noise','55Hz noise','MARKED NOISY'},'Location','best','FontSize',16,'Box','off');
+        legend({sprintf('%dHz noise',lo_hz), sprintf('%dHz noise',ln_hz), ...
+                sprintf('%dHz noise',hi_hz), 'MARKED NOISY'}, ...
+               'Location','best','FontSize',16,'Box','off');
         ylabel('Noise (uV)','FontSize',18);
         title('BEFORE NOTCH FILTERING','FontSize',22);
         obj.update_position(currsub);
@@ -1201,7 +1256,7 @@ methods
         axis tight; hold on;
         stem(x,noise_before(idxs,2)./mean(noise_before(idxs,[1,3]),2),'filled','Color','k')
         xlabel('Channel #','FontSize',18);
-        ylabel('50Hz noise / mean 45Hz+55Hz noise','FontSize',18)
+        ylabel(sprintf('%dHz noise / mean %dHz+%dHz noise', ln_hz, lo_hz, hi_hz),'FontSize',18)
         obj.update_position(currsub);
 
         currsub = subplot(2,2,2);
