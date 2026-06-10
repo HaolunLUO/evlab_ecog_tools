@@ -257,6 +257,68 @@ methods
 
     %%
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    % PLOT LINE NOISE
+    % Labels use the actual line-noise frequency (line_noise_hz) and the
+    % saved-figure name is derived from crunched_file_name. The ecog_data_v2
+    % version references for_preproc.log_file_name, which the brainstorm
+    % converter never sets.
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    function f=plot_line_noise(obj,noise_before,noise_after)
+        ln_hz  = obj.for_preproc.filter_params.line_noise_hz;
+        lo_hz  = ln_hz - 5;   % peak filter centre - 5 Hz
+        hi_hz  = ln_hz + 5;   % peak filter centre + 5 Hz
+
+        fprintf(1, '\n> Plotting %d Hz noise power ...\n', ln_hz);
+        close all
+        f = figure;
+        set(gcf,'position',[30,30,2300,900]);
+        c= [0.4660 0.6740 0.1880];
+        x = find(~obj.elec_ch_valid);
+        idxs = ~obj.elec_ch_valid;
+
+        currsub = subplot(2,2,1);
+        stem(noise_before,'filled');
+        axis tight; hold on;
+        stem(x,noise_before(idxs,:),'filled','Color','k')
+        legend({sprintf('%dHz noise',lo_hz), sprintf('%dHz noise',ln_hz), ...
+                sprintf('%dHz noise',hi_hz), 'MARKED NOISY'}, ...
+               'Location','best','FontSize',16,'Box','off');
+        ylabel('Noise (uV)','FontSize',18);
+        title('BEFORE NOTCH FILTERING','FontSize',22);
+        obj.update_position(currsub);
+
+        currsub = subplot(2,2,3);
+        stem(noise_before(:,2)./mean(noise_before(:,[1,3]),2),'filled','Color',c);
+        axis tight; hold on;
+        stem(x,noise_before(idxs,2)./mean(noise_before(idxs,[1,3]),2),'filled','Color','k')
+        xlabel('Channel #','FontSize',18);
+        ylabel(sprintf('%dHz noise / mean %dHz+%dHz noise', ln_hz, lo_hz, hi_hz),'FontSize',18)
+        obj.update_position(currsub);
+
+        currsub = subplot(2,2,2);
+        stem(noise_after,'filled');
+        axis tight; hold on;
+        stem(x,noise_after(idxs,:),'filled','Color','k')
+        title('AFTER NOTCH FILTERING','FontSize',22)
+        obj.update_position(currsub);
+
+        currsub = subplot(2,2,4);
+        stem(noise_after(:,2)./mean(noise_after(:,[1,3]),2),'filled','Color',c);
+        axis tight; hold on;
+        stem(x,noise_after(idxs,2)./mean(noise_after(idxs,[1,3]),2),'filled','Color','k')
+        xlabel('Channel #','FontSize',18)
+        obj.update_position(currsub);
+
+        filename = split(obj.crunched_file_name,'/');
+        filename = split(filename{end},'.');
+        filename = [filename{1} '_line_noise.png'];
+        saveas(gcf,strcat(filename));
+        set(0, 'CurrentFigure', f);
+    end
+
+
+    %%
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     % REFERENCE SIGNAL  (label-driven bipolar pairs; consistent with the
     % clean-only extract_shanks override below)
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
