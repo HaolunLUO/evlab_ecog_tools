@@ -34,7 +34,8 @@
 %% ========================================================================
 
 clear; clc; close all;
-
+addpath(genpath('F:\seeg\luohong\analysisEV\v2_piepeline\evlab_ecog_tools\brainstorm_pipeline'))  % MUST come FIRST
+addpath(genpath('F:\seeg\luohong\analysisEV\v2_piepeline\evlab_ecog_tools\')) 
 %% ========================================================================
 % USER SETTINGS
 %% ========================================================================
