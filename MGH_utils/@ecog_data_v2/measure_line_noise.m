@@ -3,7 +3,13 @@ function signal_noise=measure_line_noise(obj,signal)
     % 
     % Returns : measurement of signal noise
 
-    fprintf(1, '\n> Measuring 60Hz noise power ...\n');
+    if isfield(obj.for_preproc, 'filter_params') && ...
+            isfield(obj.for_preproc.filter_params, 'line_noise_hz')
+        ln_hz = obj.for_preproc.filter_params.line_noise_hz;
+    else
+        ln_hz = 60;
+    end
+    fprintf(1, '\n> Measuring %dHz noise power ...\n', ln_hz);
     fprintf(1,'[');
 
     peak = obj.for_preproc.peak;
