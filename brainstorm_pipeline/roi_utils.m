@@ -20,7 +20,7 @@ function save_roi_from_sn_obj(sn_obj, roiFile, roiSourceTask)
 %
 %   save_roi_from_sn_obj(sn_obj, roiFile, roiSourceTask)
 %
-%   sn_obj        - ecog_sn_data object after test_s_vs_n()
+%   sn_obj        - ecog_sn_data_seeg object after test_s_vs_n()
 %   roiFile       - full path to save the .mat file
 %   roiSourceTask - string label of the source task (for provenance)
 

@@ -27,14 +27,18 @@
 %   C) Run with taskType='Auditory'  -> plots MITSWJNTask ROI on Auditory
 %
 % MATLAB PATH REQUIREMENTS
-%   addpath(genpath('<repo>/brainstorm_pipeline'))  % MUST come FIRST
-%   addpath(genpath('<repo>'))                      % rest of evlab_ecog_tools
+%   addpath(genpath('<repo>'))                      % evlab_ecog_tools (incl. brainstorm_pipeline)
 %   brainstorm_to_mit_crunched_new.m must be on path (provided separately)
 %   JancaCodePapers/ must be on path (in this repo) for IED removal
+%
+%   NOTE: The SEEG classes are uniquely named (ecog_data_seeg /
+%   ecog_sn_data_seeg) and subclass MGH_utils/@ecog_data_v2, so path ORDER no
+%   longer matters - there is no longer a name collision with the legacy
+%   ecog_data / ecog_sn_data classes elsewhere in the repo.
 %% ========================================================================
 
 clear; clc; close all;
-addpath(genpath('F:\seeg\luohong\analysisEV\v2_piepeline\evlab_ecog_tools\brainstorm_pipeline'))  % MUST come FIRST
+addpath(genpath('F:\seeg\luohong\analysisEV\v2_piepeline\evlab_ecog_tools\brainstorm_pipeline'))
 addpath(genpath('F:\seeg\luohong\analysisEV\v2_piepeline\evlab_ecog_tools\')) 
 %% ========================================================================
 % USER SETTINGS
@@ -196,14 +200,14 @@ if forceRebuildCrunched && exist(taskCrunchedFile,'file')
 end
 
 if exist(taskCrunchedFile,'file')
-    % Check that the saved object is the brainstorm-pipeline ecog_data class
-    % (not the legacy ecog_data_v2).  An ecog_data_v2 object uses hardcoded
-    % 60 Hz notch settings; if we find one here it means the file was created
-    % before the brainstorm pipeline existed and must be rebuilt.
+    % Check that the saved object is the SEEG pipeline class (ecog_data_seeg).
+    % A plain ecog_data_v2 object uses the 60 Hz notch defaults; if we find one
+    % here it means the file was created before the SEEG pipeline existed and
+    % must be rebuilt with ecog_data_seeg (50 Hz notch, no CAR before bipolar).
     tmp = load(taskCrunchedFile, 'obj');
-    if ~isa(tmp.obj, 'ecog_data')
+    if ~isa(tmp.obj, 'ecog_data_seeg')
         fprintf(['WARNING: crunched file contains a ''%s'' object instead of ' ...
-            '''ecog_data''.\n  Deleting and rebuilding with the brainstorm ' ...
+            '''ecog_data_seeg''.\n  Deleting and rebuilding with the SEEG ' ...
             'pipeline (50 Hz notch).\n'], class(tmp.obj));
         delete(taskCrunchedFile);
     else
@@ -281,7 +285,9 @@ fprintf('\n=== STEP 4: PREPROCESSING ===\n');
 needPreproc = forceReprocess || ~isfield(obj.for_preproc, 'order') || isempty(obj.for_preproc.order);
 
 if needPreproc
-    obj.preprocess_signal('order', 'defaultSEEGorBOTH', ...
+    % 'defaultSEEG' does NOT apply CAR before bipolar referencing (bipolar
+    % referencing already removes shared signal between adjacent contacts).
+    obj.preprocess_signal('order', 'defaultSEEG', ...
         'isPlotVisible', isPlotVisible, ...
         'doneVisualInspection', doneVisualInspection);
 else
@@ -328,11 +334,11 @@ save(crunchedFile, 'obj', '-v7.3');
 %% ========================================================================
 fprintf('\n=== STEP 7: ANALYSIS OBJECT ===\n');
 
-sn_obj = ecog_sn_data(...
+sn_obj = ecog_sn_data_seeg(...
     outputDir, ...
     crunchedFile, ...
     workingDir, ...
-    'ecog_data.m', ...
+    'ecog_data_seeg.m', ...
     workingDir);
 
 sn_obj.anatomy = obj.anatomy;
