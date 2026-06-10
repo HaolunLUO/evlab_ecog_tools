@@ -196,8 +196,23 @@ if forceRebuildCrunched && exist(taskCrunchedFile,'file')
 end
 
 if exist(taskCrunchedFile,'file')
-    fprintf('Found existing crunched file. Skipping conversion.\n');
-else
+    % Check that the saved object is the brainstorm-pipeline ecog_data class
+    % (not the legacy ecog_data_v2).  An ecog_data_v2 object uses hardcoded
+    % 60 Hz notch settings; if we find one here it means the file was created
+    % before the brainstorm pipeline existed and must be rebuilt.
+    tmp = load(taskCrunchedFile, 'obj');
+    if ~isa(tmp.obj, 'ecog_data')
+        fprintf(['WARNING: crunched file contains a ''%s'' object instead of ' ...
+            '''ecog_data''.\n  Deleting and rebuilding with the brainstorm ' ...
+            'pipeline (50 Hz notch).\n'], class(tmp.obj));
+        delete(taskCrunchedFile);
+    else
+        fprintf('Found existing crunched file. Skipping conversion.\n');
+    end
+    clear tmp;
+end
+
+if ~exist(taskCrunchedFile,'file')
     fprintf('Running brainstorm_to_mit_crunched_new...\n');
     brainstorm_to_mit_crunched_new(allDataFiles, params);
 
