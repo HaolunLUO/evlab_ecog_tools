@@ -61,7 +61,7 @@ function brainstorm_to_mit_crunched_new(allDataFiles, params)
     %% =====================================================================
     % BUILD MIT-COMPATIBLE OBJECT
     % ======================================================================
-    fprintf('\n=== CREATING MIT ecog_data OBJECT ===\n');
+    fprintf('\n=== CREATING MIT ecog_data_seeg OBJECT ===\n');
     
     % Compute downsampled stitch_index (per-run length mapping)
     runStarts = stitch_index(:);
@@ -100,8 +100,8 @@ function brainstorm_to_mit_crunched_new(allDataFiles, params)
     for_preproc.trial_timing_raw   = allTrialTiming;
     for_preproc.trial_timing_dec   = trialTiming_dec;   % <<< CHANGED
     
-    % Create ecog_data object
-    obj = ecog_data(...
+    % Create ecog_data_seeg object
+    obj = ecog_data_seeg(...
         for_preproc, ...
         params.SubjectName, ...
         params.ProtocolName, ...
@@ -128,7 +128,7 @@ function brainstorm_to_mit_crunched_new(allDataFiles, params)
     obj.elec_ch_clean = validChanIdx;
     obj.elec_ch_valid = validChanMask;
     
-    fprintf('Created ecog_data object\n');
+    fprintf('Created ecog_data_seeg object\n');
     
     
     %% =====================================================================

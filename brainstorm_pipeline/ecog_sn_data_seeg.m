@@ -1,7 +1,7 @@
-classdef ecog_sn_data < ecog_data
-% ECOG_SN_DATA  Analysis class for sentence-vs-nonword (S vs N) localization.
+classdef ecog_sn_data_seeg < ecog_data_seeg
+% ECOG_SN_DATA_SEEG  Analysis class for sentence-vs-nonword (S vs N) localization.
 %
-% Extends ecog_data with:
+% Extends ecog_data_seeg (which itself extends the canonical ecog_data_v2) with:
 %   - test_s_vs_n()          configurable S/N permutation test
 %   - lang_resp_plots()      timecourse + barplot pipeline
 %   - get_timecourses()      extract trial-averaged timecourses per condition
@@ -12,9 +12,9 @@ classdef ecog_sn_data < ecog_data
 % Unlike the older MGH_utils/ecog_sn_data.m, condition flags (S_condition,
 % N_condition, etc.) are configurable rather than hardcoded to 'S'/'N'.
 %
-% Constructor loads from a crunched .mat file written by ecog_data or
+% Constructor loads from a crunched .mat file written by
 % brainstorm_to_mit_crunched_new. The variable in that file must be named
-% 'obj' and must be an instance of this package's ecog_data class.
+% 'obj' and must be an instance of ecog_data_seeg.
 
 properties
     %% ---- LANG ELECS ----
@@ -35,7 +35,7 @@ methods
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     % CONSTRUCTOR
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-    function sn_obj = ecog_sn_data(...
+    function sn_obj = ecog_sn_data_seeg(...
             langloc_save_path,...
             langloc_crunched_file_name,...
             langloc_crunched_file_path,...
@@ -44,7 +44,7 @@ methods
     
         load(langloc_crunched_file_name) % loads variable 'obj'
 
-        sn_obj@ecog_data(obj.for_preproc,...
+        sn_obj@ecog_data_seeg(obj.for_preproc,...
                          obj.subject,...
                          obj.experiment,...
                          obj.crunched_file_name,...
