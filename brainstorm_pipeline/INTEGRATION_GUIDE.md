@@ -3,8 +3,12 @@
 ## Overview
 
 This folder integrates a Brainstorm-to-MIT iEEG/SEEG analysis pipeline into
-`evlab_ecog_tools`.  Both pipelines produce identical **crunched `.mat` files**
-containing an `ecog_data` object, making them interoperable from Step 2 onward.
+`evlab_ecog_tools`.  The SEEG classes are **subclasses of the canonical
+`MGH_utils/@ecog_data_v2`** class, so they stay aligned with `ecog_data_v2` by
+inheritance and only override the handful of methods that must differ for SEEG.
+Crunched `.mat` files produced here contain an `ecog_data_seeg` object (an
+`ecog_data_v2` subclass), so they remain compatible with `ecog_data_v2`-based
+analysis from Step 2 onward.
 
 ---
 
@@ -21,18 +25,18 @@ containing an `ecog_data` object, making them interoperable from Step 2 onward.
                ▼                                 ▼
 ┌────────────────────────────────────────────────────────────────────┐
 │            CRUNCHED .mat  ← COMMON INTEGRATION POINT              │
-│   Variable: obj  (ecog_data object)                                │
+│   Variable: obj  (ecog_data_seeg object, an ecog_data_v2 subclass) │
 │   Contains: raw signal, trial timing, channel labels, anatomy      │
 └──────────────────────────────────┬─────────────────────────────────┘
                                    │
-                         ┌─────────▼──────────┐
-                         │  ecog_data methods  │
-                         │  (preprocess_signal,│
-                         │   make_trials, etc) │
-                         └─────────┬───────────┘
+                    ┌──────────────▼───────────────┐
+                    │  ecog_data_seeg methods        │
+                    │  (preprocess_signal, etc.;     │
+                    │   inherits ecog_data_v2)       │
+                    └──────────────┬─────────────────┘
                                    │
                     ┌──────────────▼──────────────┐
-                    │  ecog_sn_data methods        │
+                    │  ecog_sn_data_seeg methods   │
                     │  (test_s_vs_n, lang_resp_    │
                     │   plots, get_summary_stats)  │
                     └──────────────────────────────┘
@@ -44,8 +48,8 @@ containing an `ecog_data` object, making them interoperable from Step 2 onward.
 
 | File | Purpose |
 |------|---------|
-| `ecog_data.m` | Monolithic version of `ecog_data_v2`; identical interface, adds SEEG-specific improvements |
-| `ecog_sn_data.m` | Full analysis class: configurable S/N flags, timecourse/barplots, summary stats, cross-task ROI |
+| `ecog_data_seeg.m` | `ecog_data_v2` subclass; inherits everything and overrides only the SEEG-specific methods |
+| `ecog_sn_data_seeg.m` | `ecog_data_seeg` subclass: configurable S/N flags, timecourse/barplots, summary stats, cross-task ROI |
 | `roi_utils.m` | `save_roi_from_sn_obj`, `apply_roi_to_sn_obj`, `normalize_labels` |
 | `plot_anatomy_utils.m` | `plot_sig_electrodes_anatomy`, `get_electrode_coords`, `plot_template_cortex` |
 | `complete_mit_pipeline_brainstorm.m` | End-to-end pipeline script (main entry point) |
@@ -54,90 +58,94 @@ containing an `ecog_data` object, making them interoperable from Step 2 onward.
 
 ## MATLAB Path Setup
 
-> **Critical:** `brainstorm_pipeline/` must be added **before** `MGH_utils/` to
-> ensure MATLAB resolves `ecog_data` and `ecog_sn_data` to the new classes.
+> The SEEG classes are uniquely named (`ecog_data_seeg` / `ecog_sn_data_seeg`),
+> so path **order no longer matters** — there is no name collision with the
+> legacy `ecog_data` / `ecog_sn_data` classes elsewhere in the repo. Just make
+> sure the whole repo is on the path.
 
 ```matlab
-% Recommended path setup for Brainstorm pipeline
-addpath(genpath('/path/to/evlab_ecog_tools/brainstorm_pipeline'));  % FIRST
-addpath(genpath('/path/to/evlab_ecog_tools'));                       % rest of repo
+% Path setup for the SEEG (Brainstorm) pipeline
+addpath(genpath('/path/to/evlab_ecog_tools'));   % includes brainstorm_pipeline + MGH_utils
 
 % brainstorm_to_mit_crunched_new.m must also be on path (provided separately)
 ```
 
-When running the **BCI2000 pipeline** (crunch_subject_ALBANY.m), do NOT add
-`brainstorm_pipeline/` to the path — the old `ecog_data` / `ecog_sn_data` in
-`MGH_utils/` will be used instead.
+The **BCI2000 pipeline** (`crunch_subject_ALBANY.m`) is completely unaffected:
+it uses the legacy `ecog_data` / `ecog_sn_data` classes, which no longer share a
+name with anything in `brainstorm_pipeline/`.
 
 ---
 
 ## Class Compatibility
 
-### `ecog_data` vs `ecog_data_v2`
+### `ecog_data_seeg < ecog_data_v2`
 
-The new `brainstorm_pipeline/ecog_data.m` and `MGH_utils/@ecog_data_v2/` share:
-- **Identical constructor signature** (11 arguments: `for_preproc`, `subject`, etc.)
-- **Identical properties** (`elec_data`, `bip_elec_data`, `anatomy`, etc.)
+`ecog_data_seeg` **is** an `ecog_data_v2` (subclass), so:
+- It has the **identical constructor signature** (11 arguments: `for_preproc`,
+  `subject`, etc.) and **identical properties** (`elec_data`, `bip_elec_data`,
+  `anatomy`, `stats`, etc.) — all inherited.
+- Every `ecog_data_v2` method is available unless explicitly overridden below.
+- Crunched files written here load as `ecog_data_seeg` objects and work anywhere
+  an `ecog_data_v2` object is expected (`isa(obj,'ecog_data_v2')` is true).
 
-This means:
-- Crunched files written by `ecog_data_v2` can be loaded by `ecog_sn_data`
-  (the new Brainstorm-pipeline class)
-- Crunched files written by the Brainstorm pipeline can be used with
-  `ecog_data_v2` methods
+**SEEG-specific overrides (the only methods that differ from `ecog_data_v2`):**
 
-### `ecog_sn_data` (new) vs `MGH_utils/ecog_sn_data.m` (old)
+| Override | Why it differs for SEEG |
+|----------|--------------------------|
+| `define_parameters()` | 50 Hz line-noise standard (notch 50/100/150/200/250 Hz, peak 45/50/55 Hz) and excludes Gaussian high-gamma bands that land on 50 Hz harmonics |
+| `notch_filter()` | Reports the actual line-noise frequency (reads `for_preproc.filter_params.line_noise_hz`) |
+| `extract_shanks()` | Operates only on clean channels, so excluded contacts with unparseable labels can't break shank parsing |
+| `reference_signal()` | Derives bipolar pairs directly from channel labels, keeping it consistent with the clean-only `extract_shanks` |
+| `preprocess_signal()` | SEEG preprocessing orders that do **NOT** apply CAR before bipolar referencing |
 
-| Feature | Old (`MGH_utils/`) | New (`brainstorm_pipeline/`) |
-|---------|-------------------|------------------------------|
-| Condition flags | Hardcoded `'S'` / `'N'` | Configurable via `S_condition_flag`, `N_condition_flag` |
-| Preprocessing methods | Inherited from old `ecog_data` | Inherited from new `ecog_data` |
-| Timecourse extraction | Not present | `get_timecourses()` |
-| Word averages | Not present | `get_word_averages()` |
-| Summary stats | Not present | `get_summary_statistics()` |
-| Cross-task ROI | Not present | Via `apply_roi_to_sn_obj()` |
-| Plot methods | Separate `ecog_sn_analysis.m` | Embedded (`plot_timecourse`, `plot_barplot`) |
-| Anatomy optional | No | Yes (gracefully degrades without anatomy) |
+Everything else used by the pipeline — `extract_high_gamma`, `make_trials`,
+`extract_trial_epochs`, `extract_normalization_metrics`, `normalize_signal`,
+`extract_time_significance`, `extract_significant_channel`, `combine_data_files`,
+`define_clean_channels`, `get_cond_id`, the `stats` property, etc. — is
+**inherited unchanged** from `ecog_data_v2`.
 
-### Features ported FROM `ecog_data_v2` INTO `brainstorm_pipeline/ecog_data.m`
-
-These methods existed in `ecog_data_v2` but were absent in the original shared
-iEEG pipeline code. They have all been added to `brainstorm_pipeline/ecog_data.m`:
-
-| Method | Purpose |
-|--------|---------|
-| `stats` property | Struct that accumulates all analysis outputs |
-| `get_cond_id()` | Returns a logical row vector of trial indices for a condition |
-| `extract_trial_epochs()` | 3-D `[nChans × nTrials × nSamples]` epoch extraction (used for normalization and significance) |
-| `extract_normalization_metrics()` | Computes per-channel `[mean, std]` from fixation/baseline epochs; stores in `obj.stats.normMetrics` |
-| `normalize_signal()` | Normalizes `elec_data` and `bip_elec_data` using those metrics; 6 methods: `z-score`, `mean-sub`, `perc-change`, `ratio`, `log-ratio`, `norm` |
-| `extract_time_significance()` | Cluster-permutation test at every time point; results in `obj.stats.time_series.pSigChan` |
-| `extract_significant_channel()` | Per-channel permutation test (epoch > baseline power) + FDR correction; results in `obj.stats.sig_hg_channel` |
-| `doNapLabFilterExtraction` | Third high-gamma extraction method via NAPLAB Columbia filterbank (`naplab_filterbank` static method); alternative to Chang-lab Gaussian |
-
-External dependencies for the stats methods (already in this repo):
+External dependencies for the inherited stats methods (already in this repo):
 - `remove_bad_trials`, `extractCommonTrials`, `extendTimeEpoch`, `timePermCluster` — `kumar_ieeg_utils/`
 - `fdr_bh` — `fdr_bh/`
 
-### Other improvements in `brainstorm_pipeline/ecog_data.m` vs `ecog_data_v2`
+### `ecog_sn_data_seeg` vs `MGH_utils/ecog_sn_data.m` (old)
 
-1. `extract_shanks()` — operates only on clean channels (avoids label-parse failures on reference/excluded contacts)
-2. `combine_data_files()` — explicit per-segment sample offset (fixes multi-block alignment)
-3. `reference_signal()` — full inline bipolar referencing (no separate script needed)
-4. `get_summary_statistics()` (in `ecog_sn_data`) — anatomy is optional
+`ecog_sn_data_seeg < ecog_data_seeg` is the S-vs-N analysis layer. The old
+`MGH_utils/ecog_sn_data.m` extends the legacy `ecog_data` and is independent.
+
+| Feature | Old (`MGH_utils/`) | New (`brainstorm_pipeline/`) |
+|---------|-------------------|------------------------------|
+| Base class | legacy `ecog_data` | `ecog_data_seeg` (→ `ecog_data_v2`) |
+| Condition flags | Hardcoded `'S'` / `'N'` | Configurable via `S_condition_flag`, `N_condition_flag` |
+| Timecourse extraction | Not present | `get_timecourses()` |
+| Word averages | Not present | `get_word_averages()` |
+| Summary stats | Not present | `get_summary_statistics()` (anatomy optional) |
+| Cross-task ROI | Not present | Via `apply_roi_to_sn_obj()` |
+| Plot methods | Separate `ecog_sn_analysis.m` | Embedded (`plot_timecourse`, `plot_barplot`) |
+
+### CAR is not applied before bipolar referencing (SEEG)
+
+The SEEG preprocessing orders defined in `ecog_data_seeg.preprocess_signal`
+(`'defaultSEEG'`, `'defaultSEEGbyShank'`, `'preEnvelopeExtractionSEEG'`) omit the
+CAR step. Bipolar referencing already removes shared/common signal between
+adjacent contacts, so a prior common-average step is unnecessary and can distort
+the local bipolar estimate. (The parent `ecog_data_v2` orders that do use CAR,
+e.g. `'defaultECOG'` / `'defaultSEEGorBOTH'`, are still reachable — any order not
+recognized by the subclass is delegated to `ecog_data_v2`.)
 
 ### 50 Hz vs 60 Hz line noise
 
-| Setting | `brainstorm_pipeline/ecog_data.m` | `ecog_data_v2` |
-|---------|----------------------------------|----------------|
+| Setting | `ecog_data_seeg` | `ecog_data_v2` |
+|---------|------------------|----------------|
 | Notch filter harmonics | 50, 100, 150, 200, 250 Hz (European/Chinese standard) | 60, 120, 180, 240 Hz (US standard) |
 | Peak filter (noise QC) | 45, 50, 55 Hz | 55, 60, 65 Hz |
 
 **If your recordings were made in a 60 Hz country (US), edit `define_parameters()` in
-`brainstorm_pipeline/ecog_data.m`:**
+`brainstorm_pipeline/ecog_data_seeg.m`:**
 
 ```matlab
-param.notch.fcenter = [60, 120, 180, 240];  % US line noise
-param.peak.fcenter  = [55, 60, 65];
+param.line_noise_hz = 60;                   % single source of truth
+param.peak.fcenter  = param.line_noise_hz + [-5, 0, 5];   % [55 60 65]
 ```
 
 ---
@@ -190,7 +198,7 @@ Label matching in `apply_roi_to_sn_obj` is case/punctuation insensitive, so
 ## Quick-Start Checklist
 
 - [ ] `brainstorm_to_mit_crunched_new.m` on MATLAB path
-- [ ] `brainstorm_pipeline/` folder added to MATLAB path **before** `MGH_utils/`
+- [ ] Whole repo on the MATLAB path (path order no longer matters)
 - [ ] `JancaCodePapers/` on path (for IED removal; already in this repo)
 - [ ] Anatomy files present at `anatomyPath` (or set `obj.anatomy = []` to skip)
 - [ ] Edit `workingDir`, `params.SubjectName`, and `allDataFiles` in the pipeline script
@@ -201,26 +209,28 @@ Label matching in `apply_roi_to_sn_obj` is case/punctuation insensitive, so
 ## What the Existing Pipeline is NOT affected by
 
 - `crunch_subject_ALBANY.m` and `general_crunch_script.m` are unchanged
-- `MGH_utils/@ecog_data_v2/` is unchanged  
+- `MGH_utils/@ecog_data_v2/` is unchanged (the SEEG classes subclass it; they do
+  not modify it)
 - `MGH_utils/ecog_sn_data.m` (old) is unchanged
 - All filter scripts in `ecog-filters/` are unchanged
 - BCI2000 I/O in `mex/` and `albany_mex_files/` is unchanged
 
 ---
 
-## Decision Summary: Why this folder structure?
+## Decision Summary: Why uniquely-named subclasses?
 
-The key trade-off was between:
+Earlier, `brainstorm_pipeline/` shipped its own monolithic `ecog_data.m` and
+`ecog_sn_data.m`. Because those reused the names `ecog_data` / `ecog_sn_data`
+(which also exist in the repo root and in `MGH_utils/`), MATLAB could only ever
+resolve one class per name by **path order**. In practice the brainstorm copies
+were silently shadowed, so the pipeline never actually ran on them.
 
-**Option A — Rename the new classes** (`ecog_data_brainstorm` etc.)  
-→ Avoids all MATLAB path conflicts but requires changes to `ecog_sn_data.m`'s
-  `extends` declaration and the main pipeline script.
+The fix:
 
-**Option B — Isolate in a subfolder** (this implementation)  
-→ Zero risk to existing code. MATLAB resolves classes by path order, so adding
-  `brainstorm_pipeline/` first gives priority to the new classes for Brainstorm
-  runs, while the BCI2000 pipeline uses the old classes as before. The crunched
-  `.mat` format is the single integration point.
-
-Option B was chosen because it requires no edits to existing files and the
-shared crunched-file format already provides the correct integration boundary.
+1. **Unique names** (`ecog_data_seeg`, `ecog_sn_data_seeg`) eliminate the
+   collision, so path order is irrelevant.
+2. **Subclass `ecog_data_v2`** so the SEEG pipeline stays aligned with the
+   canonical class by inheritance and only the genuinely SEEG-specific methods
+   are overridden — no large monolithic copy to drift out of sync.
+3. **No edits to `ecog_data_v2`** itself, so the ECoG (grid/strip) pipelines that
+   depend on it are unaffected.
