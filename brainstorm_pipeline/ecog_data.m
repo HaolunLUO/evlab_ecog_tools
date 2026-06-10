@@ -212,6 +212,7 @@ methods
                  'BipolarReferencing',...
                  'GaussianFilterExtraction',...
                  'BandpassExtraction',...
+                 'NapLabFilterExtraction',...
                  'zscore',...
                  'downsample',...
                  'removeOutliers'...
@@ -224,6 +225,7 @@ methods
                      'reference_signal',...
                      'reference_signal',...
                      'reference_signal',...
+                     'extract_high_gamma',...
                      'extract_high_gamma',...
                      'extract_high_gamma',...
                      'zscore_signal',...
@@ -1913,31 +1915,10 @@ methods
         end
         nM = obj.stats.normMetrics;
 
-        obj.elec_data = apply_norm(obj.elec_data, nM.normFactor, ops.normtype);
+        obj.elec_data = ecog_data.apply_norm_static(obj.elec_data, nM.normFactor, ops.normtype);
 
         if ~isempty(obj.bip_elec_data) && isfield(nM,'normFactor_bip')
-            obj.bip_elec_data = apply_norm(obj.bip_elec_data, nM.normFactor_bip, ops.normtype);
-        end
-
-        function data = apply_norm(data, fac, ntype)
-            mu  = fac(:,1);
-            sig = fac(:,2);
-            switch ntype
-                case 'z-score'
-                    data = (data - mu) ./ sig;
-                case 'mean-sub'
-                    data = data - mu;
-                case 'perc-change'
-                    data = (data - mu) ./ mu;
-                case 'ratio'
-                    data = data ./ mu;
-                case 'log-ratio'
-                    data = 10 .* log10(data ./ mu);
-                case 'norm'
-                    data = (data - mu) ./ (data + mu);
-                otherwise
-                    error('Unknown normtype: %s', ntype);
-            end
+            obj.bip_elec_data = ecog_data.apply_norm_static(obj.bip_elec_data, nM.normFactor_bip, ops.normtype);
         end
     end
 
@@ -2195,6 +2176,39 @@ methods (Static)
     %   Tests H0: mean(sample1) <= mean(sample2).
     %   Returns proportion of shuffled differences exceeding observed difference.
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    %%
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    % APPLY NORMALIZATION  (static helper for normalize_signal)
+    %
+    %   data = ecog_data.apply_norm_static(data, fac, normtype)
+    %
+    %   data     - [nChans x nSamples]
+    %   fac      - [nChans x 2]  columns: [mean, std]
+    %   normtype - one of: 'z-score','mean-sub','perc-change','ratio',
+    %                      'log-ratio','norm'
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    function data = apply_norm_static(data, fac, normtype)
+        mu  = fac(:,1);
+        sig = fac(:,2);
+        switch normtype
+            case 'z-score'
+                data = (data - mu) ./ sig;
+            case 'mean-sub'
+                data = data - mu;
+            case 'perc-change'
+                data = (data - mu) ./ mu;
+            case 'ratio'
+                data = data ./ mu;
+            case 'log-ratio'
+                data = 10 .* log10(data ./ mu);
+            case 'norm'
+                data = (data - mu) ./ (data + mu);
+            otherwise
+                error('ecog_data.normalize_signal: unknown normtype ''%s''', normtype);
+        end
+    end
+
+
     function p = local_permtest(sample1, sample2, numperm)
         samples    = [sample1, sample2];
         samplediff = mean(sample1) - mean(sample2);
