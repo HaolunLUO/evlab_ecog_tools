@@ -95,14 +95,45 @@ name with anything in `brainstorm_pipeline/`.
 | `define_parameters()` | 50 Hz line-noise standard (notch 50/100/150/200/250 Hz, peak 45/50/55 Hz) and excludes Gaussian high-gamma bands that land on 50 Hz harmonics |
 | `notch_filter()` | Reports the actual line-noise frequency (reads `for_preproc.filter_params.line_noise_hz`) |
 | `extract_shanks()` | Operates only on clean channels, so excluded contacts with unparseable labels can't break shank parsing |
-| `reference_signal()` | Derives bipolar pairs directly from channel labels, keeping it consistent with the clean-only `extract_shanks` |
-| `preprocess_signal()` | SEEG preprocessing orders that do **NOT** apply CAR before bipolar referencing |
+| `reference_signal()` | Derives bipolar pairs directly from channel labels, keeping it consistent with the clean-only `extract_shanks`; also adds optional along-shank **Laplacian** referencing (`doLaplacianReferencing`) ported from `ieeg_pipeline` |
+| `preprocess_signal()` | SEEG preprocessing orders that do **NOT** apply CAR before bipolar referencing; adds Laplacian-based orders (`'defaultSEEGLaplacian'`, `'preEnvelopeExtractionSEEGLaplacian'`) |
 
 Everything else used by the pipeline — `extract_high_gamma`, `make_trials`,
 `extract_trial_epochs`, `extract_normalization_metrics`, `normalize_signal`,
 `extract_time_significance`, `extract_significant_channel`, `combine_data_files`,
 `define_clean_channels`, `get_cond_id`, the `stats` property, etc. — is
 **inherited unchanged** from `ecog_data_v2`.
+
+---
+
+## Advanced preprocessing (ported from `ieeg_pipeline`)
+
+The repo also ships a newer, more advanced preprocessing pipeline
+(`ieeg_pipeline-master/@ecog_data`, Duraivel/Casto, EvLab). Its most useful
+SEEG preprocessing capabilities have been brought into `ecog_data_seeg` as
+**additive, opt-in** features. The existing default flow (`'defaultSEEG'`) is
+**unchanged**; nothing happens unless you explicitly enable these.
+
+| Capability | How to use | Notes |
+|------------|-----------|-------|
+| **Along-shank Laplacian referencing** | `preprocess_signal('order','defaultSEEGLaplacian')` or `reference_signal('doLaplacianReferencing',true)` | Local spatial reference: endpoints subtract the single adjacent contact, interior contacts subtract the mean of both neighbours. Uses clean channels only (consistent with the SEEG `extract_shanks`). Writes to `elec_data` (no bipolar produced). New orders: `'defaultSEEGLaplacian'`, `'preEnvelopeExtractionSEEGLaplacian'`. |
+| **Sharp-artifact detection** | `obj.detect_sharp_artifacts()` (after z-scoring) | Flags sharp transients on the z-scored high-gamma envelope using OR logic over amplitude (`'min_amplitude'`, default 15) and slope (`'min_slope'`, default 10) criteria. Results in `obj.stats.artifact_stats_unipolar` / `.artifact_stats_bipolar`. For `MITNaturalisticStoriesTask` it restricts analysis to `story_*` epochs. |
+| **High-gamma smoothing** | `obj.smooth_high_gamma()` (before `make_trials`) | Gaussian smoothing of the (normalized) high-gamma envelope (default 100 ms window, `'window_s'`). Matches the smoothing the `ieeg_pipeline` performs inside `normalize_signal`; kept opt-in here so the inherited `normalize_signal` behaviour is preserved by default. |
+| **Bandpass extraction** | `[uni,bip] = obj.extract_bandpass_signal(lo,hi)` | Stitch-aware segment-wise bandpass filter. **Requires `eegfilt` (EEGLAB)** on the path; errors with a clear message otherwise. |
+| **Save processed object** | `obj.saveUpdatedObject()` | Saves to `<crunched_file_path>/<subject>_<experiment>_crunched_HG_ZScore.mat`. |
+
+In `complete_mit_pipeline_brainstorm.m` these are exposed as the opt-in flags
+`useLaplacianReferencing`, `smoothHighGamma`, and `detectSharpArtifacts` in the
+USER SETTINGS block (all default `false`).
+
+> **Why additive instead of re-basing onto `ieeg_pipeline/@ecog_data`?** That
+> class is named `ecog_data`, which already exists twice elsewhere in the repo
+> (`./ecog_data.m`, `MGH_utils/ecog_data.m`). Subclassing it would reintroduce
+> the exact class-name collision the SEEG classes were designed to avoid (the
+> superclass would resolve by path order). Keeping the robust, uniquely-named
+> `ecog_data_v2` base and porting the advanced steps as overrides/additions
+> avoids that collision and keeps the existing flow working, while still making
+> the advanced preprocessing available.
 
 External dependencies for the inherited stats methods (already in this repo):
 - `remove_bad_trials`, `extractCommonTrials`, `extendTimeEpoch`, `timePermCluster` — `kumar_ieeg_utils/`
