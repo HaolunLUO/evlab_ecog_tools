@@ -35,6 +35,12 @@
 %   ecog_sn_data_seeg) and subclass MGH_utils/@ecog_data_v2, so path ORDER no
 %   longer matters - there is no longer a name collision with the legacy
 %   ecog_data / ecog_sn_data classes elsewhere in the repo.
+%
+%   ADVANCED STEPS (ported from ieeg_pipeline): set the opt-in flags in the
+%   USER SETTINGS below to enable along-shank Laplacian referencing, Gaussian
+%   smoothing of the high-gamma envelope, and/or sharp-artifact detection. All
+%   default to OFF, so the original behaviour is unchanged. See
+%   INTEGRATION_GUIDE.md ("Advanced preprocessing") for details.
 %% ========================================================================
 
 clear; clc; close all;
@@ -56,6 +62,12 @@ forceReprocess       = true;
 % --- UI control ---
 isPlotVisible        = false;
 doneVisualInspection = true;
+
+% --- Advanced preprocessing (ported from ieeg_pipeline; all opt-in) ---
+% Leave these false to keep the original brainstorm SEEG flow unchanged.
+useLaplacianReferencing = false;  % use along-shank Laplacian instead of bipolar
+smoothHighGamma         = false;  % Gaussian-smooth the z-scored HG envelope
+detectSharpArtifacts    = false;  % flag sharp transients on the HG envelope
 
 % --- Paths (EDIT THESE) ---
 workingDir  = 'F:\seeg\luohong\analysisEV';
@@ -287,7 +299,15 @@ needPreproc = forceReprocess || ~isfield(obj.for_preproc, 'order') || isempty(ob
 if needPreproc
     % 'defaultSEEG' does NOT apply CAR before bipolar referencing (bipolar
     % referencing already removes shared signal between adjacent contacts).
-    obj.preprocess_signal('order', 'defaultSEEG', ...
+    % 'defaultSEEGLaplacian' uses along-shank Laplacian referencing instead
+    % (an advanced step ported from the ieeg_pipeline).
+    if useLaplacianReferencing
+        preprocOrder = 'defaultSEEGLaplacian';
+    else
+        preprocOrder = 'defaultSEEG';
+    end
+    fprintf('Preprocessing order: %s\n', preprocOrder);
+    obj.preprocess_signal('order', preprocOrder, ...
         'isPlotVisible', isPlotVisible, ...
         'doneVisualInspection', doneVisualInspection);
 else
@@ -365,9 +385,24 @@ fprintf('\n=== STEP 7.5: BASELINE Z-SCORE ===\n');
 % [-0.5 0] therefore captures the 500 ms fixation period before word onset.
 sn_obj.extract_normalization_metrics(key = 'word_1');
 sn_obj.normalize_signal('normtype', 'z-score');
+
+% Optional Gaussian smoothing of the z-scored high-gamma envelope
+% (ieeg_pipeline applies this inside normalize_signal; here it is opt-in so it
+% must run BEFORE make_trials so trial_data reflects the smoothed signal).
+if smoothHighGamma
+    sn_obj.smooth_high_gamma();
+    fprintf('High-gamma envelope smoothed (Gaussian).\n');
+end
+
 sn_obj.make_trials();
 
 fprintf('Baseline z-score applied. Trials rebuilt.\n');
+
+% Optional sharp-artifact detection on the z-scored high-gamma envelope.
+% Results are stored in sn_obj.stats.artifact_stats_unipolar/_bipolar.
+if detectSharpArtifacts
+    sn_obj.detect_sharp_artifacts();
+end
 
 
 %% ========================================================================
