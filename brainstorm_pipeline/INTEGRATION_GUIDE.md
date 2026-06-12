@@ -102,9 +102,11 @@ name with anything in `brainstorm_pipeline/`.
 `extract_high_gamma`, `normalize_signal` (now Gaussian-smooths the HG envelope),
 `downsample_signal`, `make_trials`, `measure_line_noise`, `highpass_filter`,
 `remove_IED`, `visual_inspection`, `extract_significant_channel`,
-`extract_time_significance`, `combine_data_files`, `define_clean_channels`,
-`first_step`, `output_data_structures`, `output_xarray`, `output_xarray_minimal`,
-`plus` (recording concatenation), `zscore_signal`, the `stats` property, etc.
+`extract_time_significance`, `extract_normalization_metrics` (baseline anchored
+to `probe_key = 1` via the `extract_trial_epochs` override), `combine_data_files`,
+`define_clean_channels`, `first_step`, `output_data_structures`, `output_xarray`,
+`output_xarray_minimal`, `plus` (recording concatenation), `zscore_signal`, the
+`stats` property, etc.
 
 **SEEG-specific overrides (the only methods that differ from the engine):**
 
@@ -116,8 +118,7 @@ name with anything in `brainstorm_pipeline/`.
 | `extract_shanks()` | Operates only on clean channels, so excluded contacts with unparseable labels can't break shank parsing |
 | `reference_signal()` | Derives bipolar pairs directly from channel labels, keeping it consistent with the clean-only `extract_shanks`; also adds along-shank **Laplacian** referencing (`doLaplacianReferencing`) |
 | `preprocess_signal()` | SEEG preprocessing orders that do **NOT** apply CAR before bipolar referencing; adds Laplacian-based orders (`'defaultSEEGLaplacian'`, `'preEnvelopeExtractionSEEGLaplacian'`); unrecognized orders are delegated to the engine |
-| `extract_trial_epochs()` | String-key epoching (`'key','word_1'`) with the window rounded to whole samples (the engine uses a numeric `probe_key`) |
-| `extract_normalization_metrics()` | Retains the `key` baseline anchor (the engine dropped it); feeds `obj.stats.normMetrics`, which the inherited `normalize_signal` consumes |
+| `extract_trial_epochs()` | Supports **both** a string `key` (`'key','word_1'`) and the engine's numeric `probe_key` (default 1, used when `key` is empty), with the window rounded to whole samples. This lets the brainstorm scripts and the inherited engine methods (`extract_significant_channel`, `extract_time_significance`, `extract_normalization_metrics`) both anchor epochs. |
 | `get_cond_id` / `get_cond_resp` / `get_value` / `get_ave_cond_trial` | Kept for the string condition flags and the exact table layout the S-vs-N analysis layer consumes |
 
 **SEEG-tuned helpers also on the subclass** (thin variants of, or extras
@@ -136,14 +137,37 @@ differences vs. the previous `ecog_data_v2`-based pipeline:
 | Area | Now (engine) | Before (`ecog_data_v2`) |
 |------|--------------|--------------------------|
 | `normalize_signal` | Z-scores **and Gaussian-smooths** the HG envelope (100 ms window) | Z-score only |
-| `extract_normalization_metrics` | Engine version drops `key`; **overridden here** to keep `key='word_1'` baseline anchoring | `key` supported |
-| New engine methods | `output_data_structures`, `output_xarray`, `output_xarray_minimal` (Python/HDF5 export), `plus` (concatenate recordings), `detect_sharp_artifacts`, `extract_bandpass_signal` | not present |
-| Referencing options | adds along-shank **Laplacian** (`'defaultSEEGLaplacian'`) | bipolar / CAR / CSR only |
+| `extract_normalization_metrics` | Engine version (inherited): baseline `[-0.5 0]` anchored to `probe_key = 1` (first word onset), over all/sampled trials | `key='fix'`/`'word_1'`, padded window, common good trials |
+| New engine methods | `output_data_structures`, `output_xarray`, `output_xarray_minimal` (Python/HDF5 export), `plus` (concatenate recordings), `detect_sharp_artifacts`, `extract_bandpass_signal`, `extract_significant_channel`, `extract_time_significance` | not present / not used |
+| Referencing options | adds along-shank **Laplacian** plus broadband orders (`'defaultSEEGorBOTHBroadBand'`, `'defaultSEEGLaplacian'`) | bipolar / CAR / CSR only |
 
-In `complete_mit_pipeline_brainstorm.m` the advanced referencing/QC are exposed
-as opt-in `USER SETTINGS` flags `useLaplacianReferencing` and
-`detectSharpArtifacts` (default `false`). HG smoothing is no longer a separate
-flag because the inherited `normalize_signal` already performs it.
+### Default pipeline (`complete_mit_pipeline_brainstorm.m`)
+
+The script runs the ieeg_pipeline feature chain that feeds the language channel
+selection:
+
+```matlab
+% Preprocess (STEP 4, on the preproc object):
+obj.preprocess_signal('order','defaultSEEGorBOTHBroadBand');  % highpass,notch,IED,CAR,Laplacian,bipolar (broadband)
+obj.extract_high_gamma('doNapLabFilterExtraction', true);     % NAPLAB high-gamma envelope
+obj.downsample_signal('decimationFreq', 200);
+
+% Significance + baseline z-score (STEP 7.5, on the analysis object):
+sn_obj.extract_significant_channel();    % -> sn_obj.stats.sig_hg_channel
+sn_obj.extract_time_significance();      % -> sn_obj.stats.time_series
+sn_obj.extract_normalization_metrics();  % -> sn_obj.stats.normMetrics (baseline = probe_key 1)
+sn_obj.normalize_signal('normtype','z-score');   % z-score (+ engine smoothing)
+sn_obj.make_trials();
+
+% -> language channel selection
+sn_obj.test_s_vs_n(...);
+```
+
+Configured via `USER SETTINGS`: `preprocOrder` (default `'defaultSEEGorBOTHBroadBand'`),
+`decimationFreq` (default `200`), and the optional `detectSharpArtifacts` flag.
+HG smoothing is not a separate flag because the inherited `normalize_signal`
+already performs it. Note `extract_significant_channel` / `extract_time_significance`
+run permutation tests and can be slow on high channel counts.
 
 > **Why a vendored engine (`@ecog_data_ieeg`) rather than subclassing
 > `ieeg_pipeline-master/@ecog_data` directly?** The upstream class is named
