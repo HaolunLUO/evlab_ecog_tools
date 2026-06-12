@@ -1,7 +1,8 @@
 classdef ecog_sn_data_seeg < ecog_data_seeg
 % ECOG_SN_DATA_SEEG  Analysis class for sentence-vs-nonword (S vs N) localization.
 %
-% Extends ecog_data_seeg (which itself extends the canonical ecog_data_v2) with:
+% Extends ecog_data_seeg (which itself extends the advanced ieeg_pipeline engine
+% @ecog_data_ieeg) with:
 %   - test_s_vs_n()          configurable S/N permutation test
 %   - lang_resp_plots()      timecourse + barplot pipeline
 %   - get_timecourses()      extract trial-averaged timecourses per condition

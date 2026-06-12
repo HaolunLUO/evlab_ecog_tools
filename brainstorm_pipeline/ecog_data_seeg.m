@@ -1,37 +1,65 @@
-classdef ecog_data_seeg < ecog_data_v2
-% ECOG_DATA_SEEG  SEEG-specific subclass of ecog_data_v2.
+classdef ecog_data_seeg < ecog_data_ieeg
+% ECOG_DATA_SEEG  SEEG-specific subclass of the advanced ieeg_pipeline engine.
 %
-% This class keeps the Brainstorm/MIT SEEG pipeline aligned with the canonical
-% MGH_utils/@ecog_data_v2 class by INHERITING everything from ecog_data_v2 and
-% overriding ONLY the methods that must differ for stereo-EEG (SEEG) data.
+% This class re-bases the Brainstorm/MIT SEEG pipeline onto the more advanced
+% EvLab ieeg_pipeline engine (vendored here as @ecog_data_ieeg) by INHERITING
+% everything from that engine and overriding ONLY the methods that must differ
+% for stereo-EEG (SEEG) data.
 %
-% Why a subclass (instead of editing ecog_data_v2 directly or keeping a full
-% standalone copy):
-%   - ecog_data_v2 is shared by the ECoG (grid/strip) pipelines; editing it in
-%     place would risk those analyses.
-%   - A uniquely-named subclass removes the previous class-name collision (there
-%     used to be three different `ecog_data` classes on the path, so the
-%     brainstorm copy was silently shadowed and never actually ran).
-%   - Inheriting from ecog_data_v2 means non-SEEG behavior stays automatically in
-%     sync with the canonical class (no copy-drift).
+% Why subclass the vendored @ecog_data_ieeg instead of the upstream
+% ieeg_pipeline-master/@ecog_data directly:
+%   - The upstream class is named `ecog_data`, which already exists twice more
+%     in this repo (./ecog_data.m and MGH_utils/ecog_data.m). Subclassing the
+%     bare name `ecog_data` would resolve by MATLAB path order and could silently
+%     pick a legacy class. The uniquely-named @ecog_data_ieeg removes that
+%     collision so path ORDER does not matter.
+%   - @ecog_data_ieeg is kept verbatim from upstream (only the class name and the
+%     `arguments obj` type validators are renamed), so it can be re-synced from
+%     ieeg_pipeline-master with a simple diff.
 %
-% SEEG-specific overrides (everything else is inherited from ecog_data_v2):
+% Inherited advanced engine methods (NOT overridden here) now come from the
+% ieeg_pipeline engine: extract_high_gamma, normalize_signal (with envelope
+% smoothing), downsample_signal, make_trials, measure_line_noise, remove_IED,
+% visual_inspection, extract_significant_channel, extract_time_significance,
+% output_data_structures, output_xarray(_minimal), plus (concatenation), etc.
+%
+% Additional SEEG-tuned helpers kept on this subclass (thin variants of, or
+% extras alongside, the engine equivalents):
+%   - detect_sharp_artifacts : sharp-transient flagging on the z-scored HG
+%                          envelope (inputParser-based; avoids parfor).
+%   - smooth_high_gamma  : explicit Gaussian smoothing of the HG envelope (the
+%                          engine also smooths inside normalize_signal).
+%   - extract_bandpass_signal : segment-wise bandpass; errors clearly if eegfilt
+%                          (EEGLAB) is not on the path.
+%   - saveUpdatedObject  : convenience save of the processed object.
+%
+% SEEG-specific overrides (everything else is inherited from ecog_data_ieeg):
 %   - define_parameters  : 50 Hz line-noise standard (peak [45 50 55] Hz, notch
 %                          50/100/150/... Hz) instead of the 60 Hz US standard,
 %                          and excludes Gaussian high-gamma bands that fall on
 %                          50 Hz harmonics.
 %   - notch_filter       : reports the actual line-noise frequency (from
-%                          for_preproc.filter_params.line_noise_hz).
+%                          for_preproc.filter_params.line_noise_hz) and runs the
+%                          interactive noisy-channel review.
+%   - plot_line_noise    : 50 Hz axis labels; figure name from crunched_file_name.
 %   - extract_shanks     : operates only on clean channels, so excluded channels
 %                          with unparseable labels cannot break shank parsing.
-%   - reference_signal   : derives bipolar pairs directly from channel labels,
-%                          keeping it consistent with the clean-only
-%                          extract_shanks above.
-%   - preprocess_signal  : SEEG preprocessing orders that do NOT apply CAR
-%                          before bipolar referencing (bipolar referencing
-%                          already removes shared/common signal between adjacent
-%                          contacts, so a prior common-average step is both
-%                          unnecessary and can distort the local estimate).
+%   - reference_signal   : derives bipolar pairs directly from channel labels
+%                          (consistent with the clean-only extract_shanks) and
+%                          adds along-shank LAPLACIAN referencing
+%                          (doLaplacianReferencing).
+%   - preprocess_signal  : SEEG preprocessing orders that do NOT apply CAR before
+%                          bipolar referencing, plus Laplacian-based orders
+%                          ('defaultSEEGLaplacian', 'preEnvelopeExtractionSEEGLaplacian').
+%                          Unrecognized orders are delegated to the engine.
+%   - extract_trial_epochs: string-key epoching ('key','word_1', ...) with the
+%                          window rounded to whole samples (the engine uses a
+%                          numeric probe_key instead).
+%   - extract_normalization_metrics : retains the `key` argument so the baseline
+%                          can be anchored to a word onset (the engine dropped it).
+%   - get_cond_id / get_cond_resp / get_value / get_ave_cond_trial : kept for the
+%                          string condition flags and the exact table layout the
+%                          S-vs-N analysis layer (ecog_sn_data_seeg) consumes.
 %
 % Crunched .mat files produced by brainstorm_to_mit_crunched_new.m contain a
 % variable named 'obj' of this class type.
@@ -42,8 +70,8 @@ methods
     % CONSTRUCTOR
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     function obj = ecog_data_seeg(varargin)
-        % Same constructor signature as ecog_data_v2; just forwards arguments.
-        obj@ecog_data_v2(varargin{:});
+        % Same constructor signature as ecog_data_ieeg; just forwards arguments.
+        obj@ecog_data_ieeg(varargin{:});
     end
 
 
@@ -94,13 +122,35 @@ methods
                          'downsample'...
                 };
 
+            case 'defaultSEEGLaplacian'
+                % Local Laplacian (along-shank) referencing instead of bipolar.
+                % Ported from the ieeg_pipeline advanced preprocessing.
+                order = {'highpassFilter',...
+                         'notchFilter',...
+                         'IEDRemoval',...
+                         'visualInspection',...
+                         'LaplacianReferencing',...
+                         'GaussianFilterExtraction',...
+                         'removeOutliers',...
+                         'downsample'...
+                };
+
+            case 'preEnvelopeExtractionSEEGLaplacian'
+                order = {'highpassFilter',...
+                         'notchFilter',...
+                         'IEDRemoval',...
+                         'visualInspection',...
+                         'LaplacianReferencing',...
+                         'downsample'...
+                };
+
             case 'test'
                 order = {'downsample'};
 
             otherwise
-                % Defer ECoG / legacy orders (including any that intentionally
-                % use CAR) to the canonical ecog_data_v2 implementation.
-                preprocess_signal@ecog_data_v2(obj,varargin{:});
+                % Defer ECoG / engine orders (defaultECOG, defaultSEEGorBOTH,
+                % broadband variants, etc.) to the ieeg_pipeline engine.
+                preprocess_signal@ecog_data_ieeg(obj,varargin{:});
                 return
         end
 
@@ -115,6 +165,7 @@ methods
                  'GlobalMeanRemoval',...
                  'CAR',...
                  'ShankCSR',...
+                 'LaplacianReferencing',...
                  'BipolarReferencing',...
                  'GaussianFilterExtraction',...
                  'BandpassExtraction',...
@@ -127,6 +178,7 @@ methods
                      'notch_filter',...
                      'remove_IED',...
                      'visual_inspection',...
+                     'reference_signal',...
                      'reference_signal',...
                      'reference_signal',...
                      'reference_signal',...
@@ -327,6 +379,7 @@ methods
         addParameter(p,'doGlobalMeanRemoval',false)
         addParameter(p,'doCAR',false);
         addParameter(p,'doShankCSR',false);
+        addParameter(p,'doLaplacianReferencing',false);
         addParameter(p,'doBipolarReferencing',false);
         parse(p, varargin{:});
         ops = p.Results;
@@ -403,6 +456,52 @@ methods
                 error('No SEEG channels to perform shank CSR on')
             end
 
+            % LAPLACIAN REFERENCING (SEEG only)
+            % Ported from the ieeg_pipeline. Re-references each clean contact to
+            % its neighbour(s) along the same shank: endpoints use the single
+            % adjacent contact, interior contacts subtract the mean of both
+            % neighbours. Operates only on clean channels (consistent with the
+            % SEEG extract_shanks override above).
+            if ops.doLaplacianReferencing && ~isempty(seeg_chans)
+                fprintf(1, '\n>> Performing Laplacian referencing for SEEG \n');
+                fprintf(1,'[');
+
+                signal_ = signal(obj.stitch_index(k):stop,:);
+                signal_laplace = signal_;   % channels on skipped shanks keep original values
+
+                [shank_locs,~,~] = obj.extract_shanks();
+                for idx_shk = 1:length(shank_locs)
+                    % sorted ascending by channel index (≈ contact order along shank)
+                    shank_channels = intersect(shank_locs{idx_shk}, obj.elec_ch_clean);
+                    if length(shank_channels) >= 2
+                        for i = 1:length(shank_channels)
+                            curr_channel = shank_channels(i);
+                            if i == 1
+                                next_channel = shank_channels(i+1);
+                                laplacian = signal_(:,curr_channel) - signal_(:,next_channel);
+                            elseif i == length(shank_channels)
+                                prev_channel = shank_channels(i-1);
+                                laplacian = signal_(:,curr_channel) - signal_(:,prev_channel);
+                            else
+                                prev_channel = shank_channels(i-1);
+                                next_channel = shank_channels(i+1);
+                                laplacian = signal_(:,curr_channel) - ...
+                                            0.5 * (signal_(:,prev_channel) + signal_(:,next_channel));
+                            end
+                            signal_laplace(:,curr_channel) = laplacian;
+                            fprintf(1,'.');
+                        end
+                    else
+                        fprintf(1, '\nWarning: shank %d has fewer than 2 clean channels. Skipping Laplacian referencing for this shank.\n', idx_shk);
+                    end
+                end
+
+                signal(obj.stitch_index(k):stop,:) = signal_laplace;
+                fprintf(1,'] done\n');
+            elseif ops.doLaplacianReferencing
+                error('No SEEG channels to perform Laplacian referencing on')
+            end
+
             % BIPOLAR REFERENCING
             if ops.doBipolarReferencing && ~isempty(seeg_chans)
                 fprintf(1, '\n>> Bipolar referencing signal \n');
@@ -469,7 +568,7 @@ methods
             end
         end
 
-        if ops.doGlobalMeanRemoval || ops.doCAR || ops.doShankCSR
+        if ops.doGlobalMeanRemoval || ops.doCAR || ops.doShankCSR || ops.doLaplacianReferencing
             obj.elec_data = signal';
         end
 
@@ -671,11 +770,11 @@ methods
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     % TRIAL / CONDITION HELPERS
     %
-    % These override the ecog_data_v2 versions, which are validated against
-    % the legacy `ecog_data` class (so they reject an ecog_data_v2 subclass)
-    % and/or assume numeric condition codes. The versions below accept string
-    % condition flags (e.g. 'SENTENCES') and the plural 'words' name-value
-    % used by the S-vs-N analysis layer.
+    % These are kept as SEEG overrides (rather than inheriting the engine
+    % versions) so the S-vs-N analysis layer (ecog_sn_data_seeg) sees exactly
+    % the table layout it expects, with string condition flags (e.g.
+    % 'SENTENCES') and the plural 'words' name-value. They form a self-consistent
+    % set (get_ave_cond_trial calls get_cond_resp and get_value below).
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     function cond_data=get_cond_resp(obj,condition,varargin)
         p = inputParser();
@@ -819,6 +918,283 @@ methods
         fprintf(1,'] done\n');
     end
 
+
+    %%
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    % EXTRACT NORMALIZATION METRICS  (retains the `key` baseline anchor)
+    % The ieeg_pipeline engine dropped the `key` argument and samples the
+    % baseline relative to a fixed probe index. The brainstorm trial_timing
+    % tables have no 'fix' marker, so the baseline must be anchored to a named
+    % key (e.g. 'word_1') with the window taken just before it. This mirrors the
+    % MGH_utils/@ecog_data_v2 behaviour and feeds obj.stats.normMetrics, which
+    % the inherited normalize_signal consumes.
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    function extract_normalization_metrics(obj,varargin)
+        p = inputParser();
+        addParameter(p,'baseTimeRange',[-0.5 0]);
+        addParameter(p,'timepad',0.5);
+        addParameter(p,'key','fix');
+        parse(p, varargin{:});
+        epoch_args = p.Results;
+
+        timePad         = epoch_args.timepad;
+        baseTimeRange   = epoch_args.baseTimeRange;
+        baseTimeExtract = [baseTimeRange(1)-timePad baseTimeRange(2)+timePad];
+
+        [baseData,baseData_bip] = obj.extract_trial_epochs('epoch_tw',baseTimeExtract,'key',epoch_args.key);
+        [~,goodtrials] = remove_bad_trials(baseData);
+        goodTrialsCommon = extractCommonTrials(goodtrials);
+
+        fprintf(1, '\n>> Extracting normalization metrics for unipolar high gamma envelope \n');
+        normFactor = zeros(size(baseData, 1), 2);
+        fprintf(1,'[');
+        for iChan = 1:size(baseData, 1)
+            normFactor(iChan, :) = [mean2(squeeze(baseData(iChan, goodTrialsCommon, :))), std2(squeeze(baseData(iChan, goodTrialsCommon, :)))];
+            fprintf(1,'.');
+        end
+        fprintf(1,'] done\n')
+        normMetrics.normFactor = normFactor;
+
+        if(~isempty(baseData_bip))
+            fprintf(1, '\n>> Extracting normalization metrics for bipolar high gamma envelope \n');
+            normFactor = zeros(size(baseData_bip, 1), 2);
+            [~,goodtrials] = remove_bad_trials(baseData_bip);
+            goodTrialsCommon = extractCommonTrials(goodtrials);
+            fprintf(1,'[');
+            for iChan = 1:size(baseData_bip, 1)
+                normFactor(iChan, :) = [mean2(squeeze(baseData_bip(iChan, goodTrialsCommon, :))), std2(squeeze(baseData_bip(iChan, goodTrialsCommon, :)))];
+                fprintf(1,'.');
+            end
+            fprintf(1,'] done\n')
+            normMetrics.normFactor_bip = normFactor;
+        end
+
+        obj.stats.normMetrics = normMetrics;
+    end
+
+
+    %%
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    % DETECT SHARP ARTIFACTS  (SEEG variant of the ieeg_pipeline engine method)
+    % Flags sharp inter-ictal transients on the z-scored high-gamma envelope
+    % of bipolar (if present) and unipolar channels, using OR logic between an
+    % amplitude criterion and a slope criterion. Results are stored in
+    % obj.stats.artifact_stats_unipolar / .artifact_stats_bipolar.
+    %
+    % NOTE: run this AFTER normalize_signal (z-score), since the thresholds are
+    % expressed in z-score units. For the MIT Naturalistic Stories task the
+    % detector restricts analysis to story epochs.
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    function detect_sharp_artifacts(obj, varargin)
+        p = inputParser();
+        addParameter(p,'min_amplitude',15);   % z-score units
+        addParameter(p,'min_slope',10);       % z-score units per sample
+        parse(p, varargin{:});
+        ops = p.Results;
+
+        fs = obj.sample_freq;
+
+        % decide which samples to analyse
+        isStories = ~isempty(obj.experiment) && ...
+                    strcmp(obj.experiment,'MITNaturalisticStoriesTask');
+        if isStories
+            epochs = [];
+            for t = 1:size(obj.trial_timing,1)
+                tbl = obj.trial_timing{t,1};
+                if any(startsWith(string(tbl.key),"story_"))
+                    storyRows = startsWith(string(tbl.key),"story_");
+                    epochs = [epochs ; tbl.start(storyRows) tbl.end(storyRows)]; %#ok<AGROW>
+                end
+            end
+            if isempty(epochs)
+                warning('No story epochs found - analysing full recording instead');
+                epochMask = true(1,size(obj.elec_data,2));
+            else
+                epochMask = false(1,size(obj.elec_data,2));
+                for e = 1:size(epochs,1)
+                    s = max(1, floor(epochs(e,1)));
+                    f = min(length(epochMask), ceil(epochs(e,2)));
+                    epochMask(s:f) = true;
+                end
+            end
+        else
+            epochMask = true(1,size(obj.elec_data,2));
+        end
+
+        if ~isempty(obj.bip_elec_data)
+            obj.stats.artifact_stats_bipolar = ...
+                run_sharp_artifact_detector(obj.bip_elec_data(:,epochMask), fs, ops);
+        end
+        obj.stats.artifact_stats_unipolar = ...
+            run_sharp_artifact_detector(obj.elec_data(:,epochMask), fs, ops);
+        obj.stats.epochMask = epochMask;
+
+        n_uni = sum([obj.stats.artifact_stats_unipolar.artifact_count] > 0);
+        fprintf(1,'\nSharp-artifact detection: %d/%d unipolar channels flagged\n', ...
+            n_uni, numel(obj.stats.artifact_stats_unipolar));
+        if ~isempty(obj.bip_elec_data)
+            n_bip = sum([obj.stats.artifact_stats_bipolar.artifact_count] > 0);
+            fprintf(1,'Sharp-artifact detection: %d/%d bipolar channels flagged\n', ...
+                n_bip, numel(obj.stats.artifact_stats_bipolar));
+        end
+    end
+
+
+    %%
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    % SMOOTH HIGH GAMMA  (ported from ieeg_pipeline normalize step)
+    % Gaussian smoothing (default 100 ms window) of the high-gamma envelope.
+    % The ieeg_pipeline applies this inside normalize_signal; here it is kept
+    % as an explicit, opt-in step so the inherited normalize_signal behaviour
+    % is preserved by default.
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    function smooth_high_gamma(obj,varargin)
+        p = inputParser();
+        addParameter(p,'window_s',0.1);   % smoothing window in seconds
+        parse(p, varargin{:});
+        ops = p.Results;
+
+        windowSize = max(1, round(ops.window_s * obj.sample_freq));
+        fprintf(1,'\n> Gaussian-smoothing high gamma (%.0f ms window) ...\n', ops.window_s*1000);
+
+        if ~isempty(obj.elec_data)
+            obj.elec_data = smoothdata(obj.elec_data', 'gaussian', windowSize)';
+        end
+        if ~isempty(obj.bip_elec_data)
+            obj.bip_elec_data = smoothdata(obj.bip_elec_data', 'gaussian', windowSize)';
+        end
+    end
+
+
+    %%
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    % EXTRACT BANDPASS SIGNAL  (SEEG variant of the ieeg_pipeline engine method)
+    % Segment-wise (stitch-aware) bandpass filtering of the raw/continuous
+    % signal. Overwrites obj.elec_data (and obj.bip_elec_data, if present) with
+    % the filtered signal and also returns it.
+    %
+    % REQUIRES eegfilt (EEGLAB) on the MATLAB path.
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    function [filtered_signal, filtered_signal_bipolar] = extract_bandpass_signal(obj, low_cutoff, high_cutoff)
+        if exist('eegfilt','file') ~= 2
+            error(['extract_bandpass_signal requires eegfilt (EEGLAB) on the ' ...
+                   'MATLAB path. Add EEGLAB or use GaussianFilterExtraction instead.']);
+        end
+
+        signal = double(obj.elec_data');
+        if ~isempty(obj.bip_elec_data)
+            signal_bipolar = obj.bip_elec_data';
+        else
+            signal_bipolar = [];
+        end
+
+        sample_freq  = obj.sample_freq;
+        stitch_index = obj.stitch_index(:);
+
+        filtered_signal = nan(size(signal));
+        if ~isempty(signal_bipolar)
+            filtered_signal_bipolar = nan(size(signal_bipolar));
+        else
+            filtered_signal_bipolar = [];
+        end
+
+        for k = 1:length(stitch_index)
+            fprintf(1, '\n> Bandpass filtering segment %d of %d ... \n', k, length(stitch_index));
+            if k == length(stitch_index)
+                stop = size(signal,1);
+            else
+                stop = stitch_index(k+1)-1;
+            end
+            seg_idx = stitch_index(k):stop;
+
+            segment = signal(seg_idx, :);
+            filtered_segment = eegfilt(segment', sample_freq, low_cutoff, high_cutoff, 0, 200)';
+            filtered_signal(seg_idx, :) = filtered_segment;
+
+            if ~isempty(signal_bipolar)
+                segment_bip = signal_bipolar(seg_idx, :);
+                filtered_segment_bip = eegfilt(segment_bip', sample_freq, low_cutoff, high_cutoff, 0, 200)';
+                filtered_signal_bipolar(seg_idx, :) = filtered_segment_bip;
+            end
+        end
+
+        obj.elec_data = filtered_signal';
+        if ~isempty(filtered_signal_bipolar)
+            obj.bip_elec_data = filtered_signal_bipolar';
+        end
+    end
+
+
+    %%
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    % SAVE UPDATED OBJECT  (mirrors the ieeg_pipeline engine method)
+    % Convenience save of the processed object to
+    % <crunched_file_path>/<subject>_<experiment>_crunched_HG_ZScore.mat
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    function saveUpdatedObject(obj)
+        crunchedFolder = fullfile(obj.crunched_file_path);
+        if ~isempty(crunchedFolder) && ~exist(crunchedFolder, 'dir')
+            mkdir(crunchedFolder);
+        end
+        filename = fullfile(crunchedFolder, [obj.subject '_' obj.experiment '_crunched_HG_ZScore.mat']);
+        save(filename, 'obj', '-v7.3');
+        fprintf('Updated object saved as: %s\n', filename);
+    end
+
 end % methods
 
 end % classdef
+
+
+%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% LOCAL FUNCTIONS  (visible to the class methods above)
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+function stats = run_sharp_artifact_detector(data, fs, ops)
+% Detect sharp artefacts on z-scored high-gamma envelope data using OR logic:
+% an event is kept if it satisfies EITHER the slope OR the amplitude criterion.
+%
+% Inputs
+%   data : [nChan x nSamples] z-scored high-gamma envelope traces
+%   fs   : sampling frequency (Hz)
+%   ops  : struct with fields min_amplitude, min_slope
+%
+% Output (per-channel struct array)
+%   channel_idx, artifact_count, max_amplitude, mean_slope, artifact_times
+
+    chan_ids = 1:size(data,1);
+    n        = numel(chan_ids);
+
+    tmpl  = struct('channel_idx',[],'artifact_count',0,'max_amplitude',NaN,...
+                   'mean_slope',NaN,'artifact_times',[]);
+    stats = repmat(tmpl,n,1);
+
+    for k = 1:n
+        x  = data(k,:);
+        dx = diff(x);   % slope (z-score/sample)
+
+        [slopePkAmp, slopePkLoc] = findpeaks(abs(dx), 'MinPeakHeight', ops.min_slope); %#ok<ASGLU>
+        [ampPkAmp,   ampPkLoc]   = findpeaks(abs(x),  'MinPeakHeight', ops.min_amplitude); %#ok<ASGLU>
+
+        allLoc = [slopePkLoc, ampPkLoc];
+        if ~isempty(allLoc)
+            uniqueLoc = unique(allLoc);
+            keepLoc   = sort(uniqueLoc);
+            keepSlope = abs(dx(min(keepLoc, numel(dx))));
+        else
+            keepLoc   = [];
+            keepSlope = [];
+        end
+
+        stats(k).channel_idx    = chan_ids(k);
+        stats(k).artifact_count = numel(keepLoc);
+        stats(k).artifact_times = keepLoc/fs;
+        if isempty(keepLoc)
+            stats(k).max_amplitude = NaN;
+            stats(k).mean_slope    = NaN;
+        else
+            stats(k).max_amplitude = max(abs(x(keepLoc)));
+            stats(k).mean_slope    = mean(keepSlope,'omitnan');
+        end
+    end
+end

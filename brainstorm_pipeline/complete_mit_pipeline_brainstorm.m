@@ -32,9 +32,16 @@
 %   JancaCodePapers/ must be on path (in this repo) for IED removal
 %
 %   NOTE: The SEEG classes are uniquely named (ecog_data_seeg /
-%   ecog_sn_data_seeg) and subclass MGH_utils/@ecog_data_v2, so path ORDER no
-%   longer matters - there is no longer a name collision with the legacy
-%   ecog_data / ecog_sn_data classes elsewhere in the repo.
+%   ecog_sn_data_seeg). ecog_data_seeg now subclasses the advanced ieeg_pipeline
+%   engine, vendored here as brainstorm_pipeline/@ecog_data_ieeg (uniquely named
+%   to avoid the collision with the legacy ecog_data classes), so path ORDER
+%   still does not matter.
+%
+%   Because of this re-base the inherited engine behaviour is in effect: e.g.
+%   normalize_signal now Gaussian-smooths the high-gamma envelope. Optional
+%   advanced steps are exposed as the opt-in flags in the USER SETTINGS below
+%   (along-shank Laplacian referencing, sharp-artifact detection). See
+%   INTEGRATION_GUIDE.md ("Re-based onto the ieeg_pipeline engine") for details.
 %% ========================================================================
 
 clear; clc; close all;
@@ -56,6 +63,13 @@ forceReprocess       = true;
 % --- UI control ---
 isPlotVisible        = false;
 doneVisualInspection = true;
+
+% --- Advanced preprocessing (ieeg_pipeline engine; opt-in) ---
+% Leave these false to keep the standard bipolar SEEG flow.
+% NOTE: the inherited engine normalize_signal already Gaussian-smooths the HG
+% envelope, so no separate smoothing flag is needed.
+useLaplacianReferencing = false;  % use along-shank Laplacian instead of bipolar
+detectSharpArtifacts    = false;  % flag sharp transients on the HG envelope
 
 % --- Paths (EDIT THESE) ---
 workingDir  = 'F:\seeg\luohong\analysisEV';
@@ -201,9 +215,10 @@ end
 
 if exist(taskCrunchedFile,'file')
     % Check that the saved object is the SEEG pipeline class (ecog_data_seeg).
-    % A plain ecog_data_v2 object uses the 60 Hz notch defaults; if we find one
-    % here it means the file was created before the SEEG pipeline existed and
-    % must be rebuilt with ecog_data_seeg (50 Hz notch, no CAR before bipolar).
+    % A plain engine/ecog_data_v2 object uses the 60 Hz notch defaults; if we
+    % find one here it means the file was created before the SEEG pipeline
+    % existed and must be rebuilt with ecog_data_seeg (50 Hz notch, no CAR
+    % before bipolar).
     tmp = load(taskCrunchedFile, 'obj');
     if ~isa(tmp.obj, 'ecog_data_seeg')
         fprintf(['WARNING: crunched file contains a ''%s'' object instead of ' ...
@@ -287,7 +302,15 @@ needPreproc = forceReprocess || ~isfield(obj.for_preproc, 'order') || isempty(ob
 if needPreproc
     % 'defaultSEEG' does NOT apply CAR before bipolar referencing (bipolar
     % referencing already removes shared signal between adjacent contacts).
-    obj.preprocess_signal('order', 'defaultSEEG', ...
+    % 'defaultSEEGLaplacian' uses along-shank Laplacian referencing instead
+    % (an advanced step ported from the ieeg_pipeline).
+    if useLaplacianReferencing
+        preprocOrder = 'defaultSEEGLaplacian';
+    else
+        preprocOrder = 'defaultSEEG';
+    end
+    fprintf('Preprocessing order: %s\n', preprocOrder);
+    obj.preprocess_signal('order', preprocOrder, ...
         'isPlotVisible', isPlotVisible, ...
         'doneVisualInspection', doneVisualInspection);
 else
@@ -364,10 +387,19 @@ fprintf('\n=== STEP 7.5: BASELINE Z-SCORE ===\n');
 % baseline to the first word ('word_1'); the default baseTimeRange of
 % [-0.5 0] therefore captures the 500 ms fixation period before word onset.
 sn_obj.extract_normalization_metrics(key = 'word_1');
+% normalize_signal is inherited from the ieeg_pipeline engine and additionally
+% Gaussian-smooths the high-gamma envelope (so make_trials below captures the
+% smoothed, z-scored signal).
 sn_obj.normalize_signal('normtype', 'z-score');
 sn_obj.make_trials();
 
-fprintf('Baseline z-score applied. Trials rebuilt.\n');
+fprintf('Baseline z-score (+ engine smoothing) applied. Trials rebuilt.\n');
+
+% Optional sharp-artifact detection on the z-scored high-gamma envelope.
+% Results are stored in sn_obj.stats.artifact_stats_unipolar/_bipolar.
+if detectSharpArtifacts
+    sn_obj.detect_sharp_artifacts();
+end
 
 
 %% ========================================================================

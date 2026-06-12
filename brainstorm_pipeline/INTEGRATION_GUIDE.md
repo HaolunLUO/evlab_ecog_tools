@@ -3,12 +3,13 @@
 ## Overview
 
 This folder integrates a Brainstorm-to-MIT iEEG/SEEG analysis pipeline into
-`evlab_ecog_tools`.  The SEEG classes are **subclasses of the canonical
-`MGH_utils/@ecog_data_v2`** class, so they stay aligned with `ecog_data_v2` by
-inheritance and only override the handful of methods that must differ for SEEG.
-Crunched `.mat` files produced here contain an `ecog_data_seeg` object (an
-`ecog_data_v2` subclass), so they remain compatible with `ecog_data_v2`-based
-analysis from Step 2 onward.
+`evlab_ecog_tools`.  The SEEG classes are now **re-based onto the advanced EvLab
+`ieeg_pipeline` engine**, which is vendored here as
+**`brainstorm_pipeline/@ecog_data_ieeg`** (a uniquely-named copy of
+`ieeg_pipeline-master/@ecog_data`). `ecog_data_seeg` subclasses that engine,
+inheriting all of its advanced preprocessing methods and overriding only the
+handful that must differ for SEEG. Crunched `.mat` files produced here contain
+an `ecog_data_seeg` object (an `ecog_data_ieeg` subclass).
 
 ---
 
@@ -25,14 +26,14 @@ analysis from Step 2 onward.
                ▼                                 ▼
 ┌────────────────────────────────────────────────────────────────────┐
 │            CRUNCHED .mat  ← COMMON INTEGRATION POINT              │
-│   Variable: obj  (ecog_data_seeg object, an ecog_data_v2 subclass) │
+│   Variable: obj  (ecog_data_seeg object, an ecog_data_ieeg subclass)│
 │   Contains: raw signal, trial timing, channel labels, anatomy      │
 └──────────────────────────────────┬─────────────────────────────────┘
                                    │
                     ┌──────────────▼───────────────┐
                     │  ecog_data_seeg methods        │
                     │  (preprocess_signal, etc.;     │
-                    │   inherits ecog_data_v2)       │
+                    │   inherits @ecog_data_ieeg)    │
                     └──────────────┬─────────────────┘
                                    │
                     ┌──────────────▼──────────────┐
@@ -48,7 +49,8 @@ analysis from Step 2 onward.
 
 | File | Purpose |
 |------|---------|
-| `ecog_data_seeg.m` | `ecog_data_v2` subclass; inherits everything and overrides only the SEEG-specific methods |
+| `@ecog_data_ieeg/` | Advanced iEEG/SEEG preprocessing engine, vendored from `ieeg_pipeline-master/@ecog_data` (renamed to avoid the `ecog_data` name collision). Kept verbatim apart from the class name and `arguments obj` type validators, for easy re-sync. |
+| `ecog_data_seeg.m` | `ecog_data_ieeg` subclass; inherits the engine and overrides only the SEEG-specific methods |
 | `ecog_sn_data_seeg.m` | `ecog_data_seeg` subclass: configurable S/N flags, timecourse/barplots, summary stats, cross-task ROI |
 | `roi_utils.m` | `save_roi_from_sn_obj`, `apply_roi_to_sn_obj`, `normalize_labels` |
 | `plot_anatomy_utils.m` | `plot_sig_electrodes_anatomy`, `get_electrode_coords`, `plot_template_cortex` |
@@ -58,10 +60,11 @@ analysis from Step 2 onward.
 
 ## MATLAB Path Setup
 
-> The SEEG classes are uniquely named (`ecog_data_seeg` / `ecog_sn_data_seeg`),
-> so path **order no longer matters** — there is no name collision with the
-> legacy `ecog_data` / `ecog_sn_data` classes elsewhere in the repo. Just make
-> sure the whole repo is on the path.
+> The SEEG classes are uniquely named (`ecog_data_seeg` / `ecog_sn_data_seeg`)
+> and the engine they subclass is the uniquely-named, vendored
+> `@ecog_data_ieeg`, so path **order no longer matters** — there is no name
+> collision with the legacy `ecog_data` / `ecog_sn_data` classes elsewhere in
+> the repo. Just make sure the whole repo is on the path.
 
 ```matlab
 % Path setup for the SEEG (Brainstorm) pipeline
@@ -69,6 +72,13 @@ addpath(genpath('/path/to/evlab_ecog_tools'));   % includes brainstorm_pipeline 
 
 % brainstorm_to_mit_crunched_new.m must also be on path (provided separately)
 ```
+
+`@ecog_data_ieeg` is self-contained for the core preprocessing, but a few
+inherited engine methods call shared utilities that live elsewhere in the repo
+(all picked up by `genpath`): `remove_bad_trials`, `extractCommonTrials`,
+`extendTimeEpoch`, `timePermCluster` (`kumar_ieeg_utils/`), `fdr_bh` (`fdr_bh/`),
+the HDF5 helpers used by `output_xarray*` (`ieeg_pipeline-master/.../utils/`),
+and `eegfilt` (EEGLAB; only for `extract_bandpass_signal`).
 
 The **BCI2000 pipeline** (`crunch_subject_ALBANY.m`) is completely unaffected:
 it uses the legacy `ecog_data` / `ecog_sn_data` classes, which no longer share a
@@ -78,35 +88,71 @@ name with anything in `brainstorm_pipeline/`.
 
 ## Class Compatibility
 
-### `ecog_data_seeg < ecog_data_v2`
+### `ecog_data_seeg < ecog_data_ieeg`
 
-`ecog_data_seeg` **is** an `ecog_data_v2` (subclass), so:
+`ecog_data_seeg` **is** an `ecog_data_ieeg` (subclass of the advanced engine), so:
 - It has the **identical constructor signature** (11 arguments: `for_preproc`,
   `subject`, etc.) and **identical properties** (`elec_data`, `bip_elec_data`,
-  `anatomy`, `stats`, etc.) — all inherited.
-- Every `ecog_data_v2` method is available unless explicitly overridden below.
-- Crunched files written here load as `ecog_data_seeg` objects and work anywhere
-  an `ecog_data_v2` object is expected (`isa(obj,'ecog_data_v2')` is true).
+  `anatomy`, `stats`, etc.) — all inherited from the engine.
+- Every `ecog_data_ieeg` (engine) method is available unless explicitly
+  overridden below.
+- `isa(obj,'ecog_data_ieeg')` is true.
 
-**SEEG-specific overrides (the only methods that differ from `ecog_data_v2`):**
+**Inherited from the advanced engine (`@ecog_data_ieeg`), unchanged:**
+`extract_high_gamma`, `normalize_signal` (now Gaussian-smooths the HG envelope),
+`downsample_signal`, `make_trials`, `measure_line_noise`, `highpass_filter`,
+`remove_IED`, `visual_inspection`, `extract_significant_channel`,
+`extract_time_significance`, `combine_data_files`, `define_clean_channels`,
+`first_step`, `output_data_structures`, `output_xarray`, `output_xarray_minimal`,
+`plus` (recording concatenation), `zscore_signal`, the `stats` property, etc.
+
+**SEEG-specific overrides (the only methods that differ from the engine):**
 
 | Override | Why it differs for SEEG |
 |----------|--------------------------|
-| `define_parameters()` | 50 Hz line-noise standard (notch 50/100/150/200/250 Hz, peak 45/50/55 Hz) and excludes Gaussian high-gamma bands that land on 50 Hz harmonics |
-| `notch_filter()` | Reports the actual line-noise frequency (reads `for_preproc.filter_params.line_noise_hz`) |
+| `define_parameters()` | 50 Hz line-noise standard (notch 50/100/150/200/250 Hz, peak 45/50/55 Hz) and excludes Gaussian high-gamma bands that land on 50 Hz harmonics (the engine defaults to the 60 Hz US standard) |
+| `notch_filter()` | Reports the actual line-noise frequency (reads `for_preproc.filter_params.line_noise_hz`) and runs the interactive noisy-channel review (the engine notch is clean-channel-only and non-interactive) |
+| `plot_line_noise()` | 50 Hz axis labels; figure name from `crunched_file_name` |
 | `extract_shanks()` | Operates only on clean channels, so excluded contacts with unparseable labels can't break shank parsing |
-| `reference_signal()` | Derives bipolar pairs directly from channel labels, keeping it consistent with the clean-only `extract_shanks` |
-| `preprocess_signal()` | SEEG preprocessing orders that do **NOT** apply CAR before bipolar referencing |
+| `reference_signal()` | Derives bipolar pairs directly from channel labels, keeping it consistent with the clean-only `extract_shanks`; also adds along-shank **Laplacian** referencing (`doLaplacianReferencing`) |
+| `preprocess_signal()` | SEEG preprocessing orders that do **NOT** apply CAR before bipolar referencing; adds Laplacian-based orders (`'defaultSEEGLaplacian'`, `'preEnvelopeExtractionSEEGLaplacian'`); unrecognized orders are delegated to the engine |
+| `extract_trial_epochs()` | String-key epoching (`'key','word_1'`) with the window rounded to whole samples (the engine uses a numeric `probe_key`) |
+| `extract_normalization_metrics()` | Retains the `key` baseline anchor (the engine dropped it); feeds `obj.stats.normMetrics`, which the inherited `normalize_signal` consumes |
+| `get_cond_id` / `get_cond_resp` / `get_value` / `get_ave_cond_trial` | Kept for the string condition flags and the exact table layout the S-vs-N analysis layer consumes |
 
-Everything else used by the pipeline — `extract_high_gamma`, `make_trials`,
-`extract_trial_epochs`, `extract_normalization_metrics`, `normalize_signal`,
-`extract_time_significance`, `extract_significant_channel`, `combine_data_files`,
-`define_clean_channels`, `get_cond_id`, the `stats` property, etc. — is
-**inherited unchanged** from `ecog_data_v2`.
+**SEEG-tuned helpers also on the subclass** (thin variants of, or extras
+alongside, the engine equivalents): `detect_sharp_artifacts` (inputParser-based;
+avoids `parfor`), `smooth_high_gamma` (explicit HG smoothing), and
+`extract_bandpass_signal` (errors clearly if `eegfilt`/EEGLAB is missing).
 
-External dependencies for the inherited stats methods (already in this repo):
-- `remove_bad_trials`, `extractCommonTrials`, `extendTimeEpoch`, `timePermCluster` — `kumar_ieeg_utils/`
-- `fdr_bh` — `fdr_bh/`
+---
+
+## What the re-base onto the engine changes
+
+Because the base class is now the advanced engine rather than `ecog_data_v2`,
+the inherited methods are the **advanced** versions. The most visible behavioural
+differences vs. the previous `ecog_data_v2`-based pipeline:
+
+| Area | Now (engine) | Before (`ecog_data_v2`) |
+|------|--------------|--------------------------|
+| `normalize_signal` | Z-scores **and Gaussian-smooths** the HG envelope (100 ms window) | Z-score only |
+| `extract_normalization_metrics` | Engine version drops `key`; **overridden here** to keep `key='word_1'` baseline anchoring | `key` supported |
+| New engine methods | `output_data_structures`, `output_xarray`, `output_xarray_minimal` (Python/HDF5 export), `plus` (concatenate recordings), `detect_sharp_artifacts`, `extract_bandpass_signal` | not present |
+| Referencing options | adds along-shank **Laplacian** (`'defaultSEEGLaplacian'`) | bipolar / CAR / CSR only |
+
+In `complete_mit_pipeline_brainstorm.m` the advanced referencing/QC are exposed
+as opt-in `USER SETTINGS` flags `useLaplacianReferencing` and
+`detectSharpArtifacts` (default `false`). HG smoothing is no longer a separate
+flag because the inherited `normalize_signal` already performs it.
+
+> **Why a vendored engine (`@ecog_data_ieeg`) rather than subclassing
+> `ieeg_pipeline-master/@ecog_data` directly?** The upstream class is named
+> `ecog_data`, which already exists twice elsewhere in the repo (`./ecog_data.m`,
+> `MGH_utils/ecog_data.m`). Subclassing the bare name would resolve the
+> superclass by MATLAB path order and could silently pick a legacy class. The
+> uniquely-named vendored copy removes that collision while keeping the engine
+> byte-for-byte re-syncable from upstream (only the class name and the
+> `arguments obj` type validators were renamed).
 
 ### `ecog_sn_data_seeg` vs `MGH_utils/ecog_sn_data.m` (old)
 
@@ -115,7 +161,7 @@ External dependencies for the inherited stats methods (already in this repo):
 
 | Feature | Old (`MGH_utils/`) | New (`brainstorm_pipeline/`) |
 |---------|-------------------|------------------------------|
-| Base class | legacy `ecog_data` | `ecog_data_seeg` (→ `ecog_data_v2`) |
+| Base class | legacy `ecog_data` | `ecog_data_seeg` (→ `ecog_data_ieeg`) |
 | Condition flags | Hardcoded `'S'` / `'N'` | Configurable via `S_condition_flag`, `N_condition_flag` |
 | Timecourse extraction | Not present | `get_timecourses()` |
 | Word averages | Not present | `get_word_averages()` |
@@ -129,14 +175,14 @@ The SEEG preprocessing orders defined in `ecog_data_seeg.preprocess_signal`
 (`'defaultSEEG'`, `'defaultSEEGbyShank'`, `'preEnvelopeExtractionSEEG'`) omit the
 CAR step. Bipolar referencing already removes shared/common signal between
 adjacent contacts, so a prior common-average step is unnecessary and can distort
-the local bipolar estimate. (The parent `ecog_data_v2` orders that do use CAR,
-e.g. `'defaultECOG'` / `'defaultSEEGorBOTH'`, are still reachable — any order not
-recognized by the subclass is delegated to `ecog_data_v2`.)
+the local bipolar estimate. (The engine orders that do use CAR, e.g.
+`'defaultECOG'` / `'defaultSEEGorBOTH'`, are still reachable — any order not
+recognized by the subclass is delegated to `@ecog_data_ieeg`.)
 
 ### 50 Hz vs 60 Hz line noise
 
-| Setting | `ecog_data_seeg` | `ecog_data_v2` |
-|---------|------------------|----------------|
+| Setting | `ecog_data_seeg` | `@ecog_data_ieeg` (engine) |
+|---------|------------------|----------------------------|
 | Notch filter harmonics | 50, 100, 150, 200, 250 Hz (European/Chinese standard) | 60, 120, 180, 240 Hz (US standard) |
 | Peak filter (noise QC) | 45, 50, 55 Hz | 55, 60, 65 Hz |
 
@@ -209,28 +255,33 @@ Label matching in `apply_roi_to_sn_obj` is case/punctuation insensitive, so
 ## What the Existing Pipeline is NOT affected by
 
 - `crunch_subject_ALBANY.m` and `general_crunch_script.m` are unchanged
-- `MGH_utils/@ecog_data_v2/` is unchanged (the SEEG classes subclass it; they do
-  not modify it)
+- `MGH_utils/@ecog_data_v2/` is unchanged (no longer used by the SEEG pipeline,
+  but still present for any other consumers)
+- `ieeg_pipeline-master/@ecog_data` (upstream) is unchanged — `@ecog_data_ieeg`
+  is a renamed vendored copy of it
 - `MGH_utils/ecog_sn_data.m` (old) is unchanged
 - All filter scripts in `ecog-filters/` are unchanged
 - BCI2000 I/O in `mex/` and `albany_mex_files/` is unchanged
 
 ---
 
-## Decision Summary: Why uniquely-named subclasses?
+## Decision Summary: re-basing onto the advanced engine
 
-Earlier, `brainstorm_pipeline/` shipped its own monolithic `ecog_data.m` and
-`ecog_sn_data.m`. Because those reused the names `ecog_data` / `ecog_sn_data`
-(which also exist in the repo root and in `MGH_utils/`), MATLAB could only ever
-resolve one class per name by **path order**. In practice the brainstorm copies
-were silently shadowed, so the pipeline never actually ran on them.
+Earlier, `brainstorm_pipeline/` shipped its own monolithic `ecog_data.m` /
+`ecog_sn_data.m`, which collided by name with the repo-root and `MGH_utils/`
+classes and were silently shadowed. That was fixed by giving the SEEG classes
+**unique names** (`ecog_data_seeg`, `ecog_sn_data_seeg`) and subclassing
+`ecog_data_v2`.
 
-The fix:
+This update re-bases the SEEG classes onto the newer, more advanced EvLab
+`ieeg_pipeline` engine:
 
-1. **Unique names** (`ecog_data_seeg`, `ecog_sn_data_seeg`) eliminate the
-   collision, so path order is irrelevant.
-2. **Subclass `ecog_data_v2`** so the SEEG pipeline stays aligned with the
-   canonical class by inheritance and only the genuinely SEEG-specific methods
-   are overridden — no large monolithic copy to drift out of sync.
-3. **No edits to `ecog_data_v2`** itself, so the ECoG (grid/strip) pipelines that
-   depend on it are unaffected.
+1. **Vendor the engine under a unique name** (`@ecog_data_ieeg`, copied from
+   `ieeg_pipeline-master/@ecog_data`). The upstream class is named `ecog_data`
+   and would collide with the two legacy `ecog_data` classes; the unique name
+   keeps path order irrelevant. Only the class name and the `arguments obj` type
+   validators were renamed, so it stays re-syncable from upstream.
+2. **`ecog_data_seeg < ecog_data_ieeg`** inherits every advanced engine method
+   and overrides only the genuinely SEEG-specific ones.
+3. **No edits to the upstream `ieeg_pipeline-master/@ecog_data`** or to
+   `MGH_utils/@ecog_data_v2`, so other consumers are unaffected.
