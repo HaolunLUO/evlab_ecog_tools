@@ -1,55 +1,65 @@
-classdef ecog_data_seeg < ecog_data_v2
-% ECOG_DATA_SEEG  SEEG-specific subclass of ecog_data_v2.
+classdef ecog_data_seeg < ecog_data_ieeg
+% ECOG_DATA_SEEG  SEEG-specific subclass of the advanced ieeg_pipeline engine.
 %
-% This class keeps the Brainstorm/MIT SEEG pipeline aligned with the canonical
-% MGH_utils/@ecog_data_v2 class by INHERITING everything from ecog_data_v2 and
-% overriding ONLY the methods that must differ for stereo-EEG (SEEG) data.
+% This class re-bases the Brainstorm/MIT SEEG pipeline onto the more advanced
+% EvLab ieeg_pipeline engine (vendored here as @ecog_data_ieeg) by INHERITING
+% everything from that engine and overriding ONLY the methods that must differ
+% for stereo-EEG (SEEG) data.
 %
-% Why a subclass (instead of editing ecog_data_v2 directly or keeping a full
-% standalone copy):
-%   - ecog_data_v2 is shared by the ECoG (grid/strip) pipelines; editing it in
-%     place would risk those analyses.
-%   - A uniquely-named subclass removes the previous class-name collision (there
-%     used to be three different `ecog_data` classes on the path, so the
-%     brainstorm copy was silently shadowed and never actually ran).
-%   - Inheriting from ecog_data_v2 means non-SEEG behavior stays automatically in
-%     sync with the canonical class (no copy-drift).
+% Why subclass the vendored @ecog_data_ieeg instead of the upstream
+% ieeg_pipeline-master/@ecog_data directly:
+%   - The upstream class is named `ecog_data`, which already exists twice more
+%     in this repo (./ecog_data.m and MGH_utils/ecog_data.m). Subclassing the
+%     bare name `ecog_data` would resolve by MATLAB path order and could silently
+%     pick a legacy class. The uniquely-named @ecog_data_ieeg removes that
+%     collision so path ORDER does not matter.
+%   - @ecog_data_ieeg is kept verbatim from upstream (only the class name and the
+%     `arguments obj` type validators are renamed), so it can be re-synced from
+%     ieeg_pipeline-master with a simple diff.
 %
-% SEEG-specific overrides (everything else is inherited from ecog_data_v2):
+% Inherited advanced engine methods (NOT overridden here) now come from the
+% ieeg_pipeline engine: extract_high_gamma, normalize_signal (with envelope
+% smoothing), downsample_signal, make_trials, measure_line_noise, remove_IED,
+% visual_inspection, extract_significant_channel, extract_time_significance,
+% output_data_structures, output_xarray(_minimal), plus (concatenation), etc.
+%
+% Additional SEEG-tuned helpers kept on this subclass (thin variants of, or
+% extras alongside, the engine equivalents):
+%   - detect_sharp_artifacts : sharp-transient flagging on the z-scored HG
+%                          envelope (inputParser-based; avoids parfor).
+%   - smooth_high_gamma  : explicit Gaussian smoothing of the HG envelope (the
+%                          engine also smooths inside normalize_signal).
+%   - extract_bandpass_signal : segment-wise bandpass; errors clearly if eegfilt
+%                          (EEGLAB) is not on the path.
+%   - saveUpdatedObject  : convenience save of the processed object.
+%
+% SEEG-specific overrides (everything else is inherited from ecog_data_ieeg):
 %   - define_parameters  : 50 Hz line-noise standard (peak [45 50 55] Hz, notch
 %                          50/100/150/... Hz) instead of the 60 Hz US standard,
 %                          and excludes Gaussian high-gamma bands that fall on
 %                          50 Hz harmonics.
 %   - notch_filter       : reports the actual line-noise frequency (from
-%                          for_preproc.filter_params.line_noise_hz).
+%                          for_preproc.filter_params.line_noise_hz) and runs the
+%                          interactive noisy-channel review.
+%   - plot_line_noise    : 50 Hz axis labels; figure name from crunched_file_name.
 %   - extract_shanks     : operates only on clean channels, so excluded channels
 %                          with unparseable labels cannot break shank parsing.
-%   - reference_signal   : derives bipolar pairs directly from channel labels,
-%                          keeping it consistent with the clean-only
-%                          extract_shanks above.
-%   - preprocess_signal  : SEEG preprocessing orders that do NOT apply CAR
-%                          before bipolar referencing (bipolar referencing
-%                          already removes shared/common signal between adjacent
-%                          contacts, so a prior common-average step is both
-%                          unnecessary and can distort the local estimate).
-%
-% ADVANCED CAPABILITIES ported from the ieeg_pipeline (Duraivel/Casto, EvLab):
-% These bring the more advanced ieeg_pipeline preprocessing steps into the
-% brainstorm SEEG pipeline. They are ADDITIVE - the existing default SEEG flow
-% ('defaultSEEG') is unchanged - and are opt-in via new preprocessing orders or
-% by calling the methods directly:
-%   - reference_signal   : now also supports SEEG LAPLACIAN referencing
-%                          (doLaplacianReferencing), a local spatial reference
-%                          that subtracts neighbouring contacts along each shank.
-%   - preprocess_signal  : new Laplacian-based SEEG orders
+%   - reference_signal   : derives bipolar pairs directly from channel labels
+%                          (consistent with the clean-only extract_shanks) and
+%                          adds along-shank LAPLACIAN referencing
+%                          (doLaplacianReferencing).
+%   - preprocess_signal  : SEEG preprocessing orders that do NOT apply CAR before
+%                          bipolar referencing, plus Laplacian-based orders
 %                          ('defaultSEEGLaplacian', 'preEnvelopeExtractionSEEGLaplacian').
-%   - detect_sharp_artifacts : flags sharp inter-ictal transients on the
-%                          z-scored high-gamma envelope (amplitude/slope criteria).
-%   - smooth_high_gamma  : Gaussian smoothing of the (normalized) high-gamma
-%                          envelope, matching the ieeg_pipeline normalize step.
-%   - extract_bandpass_signal : segment-wise bandpass filtering (requires
-%                          eegfilt / EEGLAB on the path).
-%   - saveUpdatedObject  : convenience save of the processed object.
+%                          Unrecognized orders are delegated to the engine.
+%   - extract_trial_epochs: string-key epoching ('key','word_1', ...) with the
+%                          window rounded to whole samples (the engine uses a
+%                          numeric probe_key instead).
+%   - extract_normalization_metrics : retains the `key` argument so the baseline
+%                          can be anchored to a word onset (the engine dropped it).
+%   - get_cond_id / get_cond_resp / get_value / get_ave_cond_trial : kept for the
+%                          string condition flags and the exact table layout the
+%                          S-vs-N analysis layer (ecog_sn_data_seeg) consumes.
 %
 % Crunched .mat files produced by brainstorm_to_mit_crunched_new.m contain a
 % variable named 'obj' of this class type.
@@ -60,8 +70,8 @@ methods
     % CONSTRUCTOR
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     function obj = ecog_data_seeg(varargin)
-        % Same constructor signature as ecog_data_v2; just forwards arguments.
-        obj@ecog_data_v2(varargin{:});
+        % Same constructor signature as ecog_data_ieeg; just forwards arguments.
+        obj@ecog_data_ieeg(varargin{:});
     end
 
 
@@ -138,9 +148,9 @@ methods
                 order = {'downsample'};
 
             otherwise
-                % Defer ECoG / legacy orders (including any that intentionally
-                % use CAR) to the canonical ecog_data_v2 implementation.
-                preprocess_signal@ecog_data_v2(obj,varargin{:});
+                % Defer ECoG / engine orders (defaultECOG, defaultSEEGorBOTH,
+                % broadband variants, etc.) to the ieeg_pipeline engine.
+                preprocess_signal@ecog_data_ieeg(obj,varargin{:});
                 return
         end
 
@@ -760,11 +770,11 @@ methods
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     % TRIAL / CONDITION HELPERS
     %
-    % These override the ecog_data_v2 versions, which are validated against
-    % the legacy `ecog_data` class (so they reject an ecog_data_v2 subclass)
-    % and/or assume numeric condition codes. The versions below accept string
-    % condition flags (e.g. 'SENTENCES') and the plural 'words' name-value
-    % used by the S-vs-N analysis layer.
+    % These are kept as SEEG overrides (rather than inheriting the engine
+    % versions) so the S-vs-N analysis layer (ecog_sn_data_seeg) sees exactly
+    % the table layout it expects, with string condition flags (e.g.
+    % 'SENTENCES') and the plural 'words' name-value. They form a self-consistent
+    % set (get_ave_cond_trial calls get_cond_resp and get_value below).
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     function cond_data=get_cond_resp(obj,condition,varargin)
         p = inputParser();
@@ -911,7 +921,61 @@ methods
 
     %%
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-    % DETECT SHARP ARTIFACTS  (ported from ieeg_pipeline)
+    % EXTRACT NORMALIZATION METRICS  (retains the `key` baseline anchor)
+    % The ieeg_pipeline engine dropped the `key` argument and samples the
+    % baseline relative to a fixed probe index. The brainstorm trial_timing
+    % tables have no 'fix' marker, so the baseline must be anchored to a named
+    % key (e.g. 'word_1') with the window taken just before it. This mirrors the
+    % MGH_utils/@ecog_data_v2 behaviour and feeds obj.stats.normMetrics, which
+    % the inherited normalize_signal consumes.
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    function extract_normalization_metrics(obj,varargin)
+        p = inputParser();
+        addParameter(p,'baseTimeRange',[-0.5 0]);
+        addParameter(p,'timepad',0.5);
+        addParameter(p,'key','fix');
+        parse(p, varargin{:});
+        epoch_args = p.Results;
+
+        timePad         = epoch_args.timepad;
+        baseTimeRange   = epoch_args.baseTimeRange;
+        baseTimeExtract = [baseTimeRange(1)-timePad baseTimeRange(2)+timePad];
+
+        [baseData,baseData_bip] = obj.extract_trial_epochs('epoch_tw',baseTimeExtract,'key',epoch_args.key);
+        [~,goodtrials] = remove_bad_trials(baseData);
+        goodTrialsCommon = extractCommonTrials(goodtrials);
+
+        fprintf(1, '\n>> Extracting normalization metrics for unipolar high gamma envelope \n');
+        normFactor = zeros(size(baseData, 1), 2);
+        fprintf(1,'[');
+        for iChan = 1:size(baseData, 1)
+            normFactor(iChan, :) = [mean2(squeeze(baseData(iChan, goodTrialsCommon, :))), std2(squeeze(baseData(iChan, goodTrialsCommon, :)))];
+            fprintf(1,'.');
+        end
+        fprintf(1,'] done\n')
+        normMetrics.normFactor = normFactor;
+
+        if(~isempty(baseData_bip))
+            fprintf(1, '\n>> Extracting normalization metrics for bipolar high gamma envelope \n');
+            normFactor = zeros(size(baseData_bip, 1), 2);
+            [~,goodtrials] = remove_bad_trials(baseData_bip);
+            goodTrialsCommon = extractCommonTrials(goodtrials);
+            fprintf(1,'[');
+            for iChan = 1:size(baseData_bip, 1)
+                normFactor(iChan, :) = [mean2(squeeze(baseData_bip(iChan, goodTrialsCommon, :))), std2(squeeze(baseData_bip(iChan, goodTrialsCommon, :)))];
+                fprintf(1,'.');
+            end
+            fprintf(1,'] done\n')
+            normMetrics.normFactor_bip = normFactor;
+        end
+
+        obj.stats.normMetrics = normMetrics;
+    end
+
+
+    %%
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    % DETECT SHARP ARTIFACTS  (SEEG variant of the ieeg_pipeline engine method)
     % Flags sharp inter-ictal transients on the z-scored high-gamma envelope
     % of bipolar (if present) and unipolar channels, using OR logic between an
     % amplitude criterion and a slope criterion. Results are stored in
@@ -1004,7 +1068,7 @@ methods
 
     %%
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-    % EXTRACT BANDPASS SIGNAL  (ported from ieeg_pipeline)
+    % EXTRACT BANDPASS SIGNAL  (SEEG variant of the ieeg_pipeline engine method)
     % Segment-wise (stitch-aware) bandpass filtering of the raw/continuous
     % signal. Overwrites obj.elec_data (and obj.bip_elec_data, if present) with
     % the filtered signal and also returns it.
@@ -1063,7 +1127,7 @@ methods
 
     %%
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-    % SAVE UPDATED OBJECT  (ported from ieeg_pipeline)
+    % SAVE UPDATED OBJECT  (mirrors the ieeg_pipeline engine method)
     % Convenience save of the processed object to
     % <crunched_file_path>/<subject>_<experiment>_crunched_HG_ZScore.mat
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
