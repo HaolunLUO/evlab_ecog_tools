@@ -77,7 +77,7 @@ anatomyPath = fullfile(workingDir, 'anatomy\');
 
 % --- Subject/protocol ---
 params = struct();
-params.SubjectName  = 'Subject10';
+params.SubjectName  = 'Subject07';
 params.ProtocolName = 'analysis';
 params.outputPath   = workingDir;
 params.taskType     = taskType;
@@ -86,7 +86,7 @@ params.taskType     = taskType;
 switch taskType
     case 'MITSWJNTask'
         allDataFiles = {
-            'F:\seeg\analysis\data\Subject10/DA0011V2/data_block001_03.mat'
+            'F:\seeg\analysis\data\Subject07/DA0011OQ/data_block001.mat'
         };
     case 'WM'
         allDataFiles = {
