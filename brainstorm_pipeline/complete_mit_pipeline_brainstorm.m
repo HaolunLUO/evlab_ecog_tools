@@ -54,7 +54,7 @@ forceRebuildCrunched = true;
 forceReprocess       = true;
 
 % --- UI control ---
-isPlotVisible        = true;
+isPlotVisible        = false;
 doneVisualInspection = true;
 
 % --- Paths (EDIT THESE) ---
@@ -63,7 +63,7 @@ anatomyPath = fullfile(workingDir, 'anatomy\');
 
 % --- Subject/protocol ---
 params = struct();
-params.SubjectName  = 'Subject11';
+params.SubjectName  = 'Subject10';
 params.ProtocolName = 'analysis';
 params.outputPath   = workingDir;
 params.taskType     = taskType;
@@ -72,7 +72,7 @@ params.taskType     = taskType;
 switch taskType
     case 'MITSWJNTask'
         allDataFiles = {
-            'F:\seeg\analysis\data\Subject11\DA01008R\data_block001_02.mat'
+            'F:\seeg\analysis\data\Subject10/DA0011V2/data_block001_03.mat'
         };
     case 'WM'
         allDataFiles = {
