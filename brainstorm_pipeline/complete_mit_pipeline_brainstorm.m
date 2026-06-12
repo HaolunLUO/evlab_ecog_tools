@@ -61,8 +61,8 @@ forceRebuildCrunched = true;
 forceReprocess       = true;
 
 % --- UI control ---
-isPlotVisible        = false;
-doneVisualInspection = true;
+isPlotVisible        = true;
+doneVisualInspection = false;
 
 % --- Preprocessing / feature extraction (ieeg_pipeline engine) ---
 % Broadband referencing -> NAPLAB high-gamma envelope -> downsample, followed
@@ -72,7 +72,7 @@ doneVisualInspection = true;
 % envelope.
 preprocOrder   = 'defaultSEEGorBOTHBroadBand';  % highpass,notch,IED,CAR,Laplacian,bipolar (no envelope)
 decimationFreq = 200;                            % Hz, for downsample_signal
-detectSharpArtifacts = false;                    % optional sharp-transient QC after z-scoring
+detectSharpArtifacts = true;                    % optional sharp-transient QC after z-scoring
 
 % --- Paths (EDIT THESE) ---
 workingDir  = 'F:\seeg\luohong\analysisEV';
