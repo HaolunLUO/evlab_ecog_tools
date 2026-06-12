@@ -64,12 +64,15 @@ forceReprocess       = true;
 isPlotVisible        = false;
 doneVisualInspection = true;
 
-% --- Advanced preprocessing (ieeg_pipeline engine; opt-in) ---
-% Leave these false to keep the standard bipolar SEEG flow.
-% NOTE: the inherited engine normalize_signal already Gaussian-smooths the HG
-% envelope, so no separate smoothing flag is needed.
-useLaplacianReferencing = false;  % use along-shank Laplacian instead of bipolar
-detectSharpArtifacts    = false;  % flag sharp transients on the HG envelope
+% --- Preprocessing / feature extraction (ieeg_pipeline engine) ---
+% Broadband referencing -> NAPLAB high-gamma envelope -> downsample, followed
+% (in STEP 7.5) by significance + baseline z-score. This chain is the input to
+% the language channel selection.
+% NOTE: the inherited engine normalize_signal also Gaussian-smooths the HG
+% envelope.
+preprocOrder   = 'defaultSEEGorBOTHBroadBand';  % highpass,notch,IED,CAR,Laplacian,bipolar (no envelope)
+decimationFreq = 200;                            % Hz, for downsample_signal
+detectSharpArtifacts = false;                    % optional sharp-transient QC after z-scoring
 
 % --- Paths (EDIT THESE) ---
 workingDir  = 'F:\seeg\luohong\analysisEV';
@@ -300,19 +303,19 @@ fprintf('\n=== STEP 4: PREPROCESSING ===\n');
 needPreproc = forceReprocess || ~isfield(obj.for_preproc, 'order') || isempty(obj.for_preproc.order);
 
 if needPreproc
-    % 'defaultSEEG' does NOT apply CAR before bipolar referencing (bipolar
-    % referencing already removes shared signal between adjacent contacts).
-    % 'defaultSEEGLaplacian' uses along-shank Laplacian referencing instead
-    % (an advanced step ported from the ieeg_pipeline).
-    if useLaplacianReferencing
-        preprocOrder = 'defaultSEEGLaplacian';
-    else
-        preprocOrder = 'defaultSEEG';
-    end
+    % 1) Broadband referencing (engine order, delegated to @ecog_data_ieeg):
+    %    highpass -> notch -> IED -> CAR -> Laplacian -> bipolar, with NO
+    %    envelope extraction and NO downsampling yet.
     fprintf('Preprocessing order: %s\n', preprocOrder);
     obj.preprocess_signal('order', preprocOrder, ...
         'isPlotVisible', isPlotVisible, ...
         'doneVisualInspection', doneVisualInspection);
+
+    % 2) High-gamma envelope via the NAPLAB filterbank.
+    obj.extract_high_gamma('doNapLabFilterExtraction', true);
+
+    % 3) Downsample the HG envelope.
+    obj.downsample_signal('decimationFreq', decimationFreq);
 else
     fprintf('Preprocessing already present; skipping.\n');
 end
@@ -373,27 +376,31 @@ fprintf('Output directory: %s\n', sn_obj.langloc_save_path);
 
 
 %% ========================================================================
-% STEP 7.5: BASELINE Z-SCORE
+% STEP 7.5: SIGNIFICANCE + BASELINE Z-SCORE
 %% ========================================================================
-fprintf('\n=== STEP 7.5: BASELINE Z-SCORE ===\n');
+fprintf('\n=== STEP 7.5: SIGNIFICANCE + BASELINE Z-SCORE ===\n');
 
-% Compute per-channel mean and std from the pre-trial fixation (baseline)
-% period, then apply (x - baseline_mean) / baseline_std to the continuous
-% signal. Trials are rebuilt afterward so all downstream steps use the
-% baseline-normalized high-gamma signal.
+% This is the ieeg_pipeline feature chain that feeds the language channel
+% selection, run on the analysis object:
+%   extract_significant_channel -> extract_time_significance
+%   -> extract_normalization_metrics -> normalize_signal('z-score')
 %
-% The brainstorm-derived trial_timing tables only contain word-onset keys
-% ('word_1', 'word_2', ...), with no explicit 'fix' marker. Anchor the
-% baseline to the first word ('word_1'); the default baseTimeRange of
-% [-0.5 0] therefore captures the 500 ms fixation period before word onset.
-sn_obj.extract_normalization_metrics(key = 'word_1');
+% The significance steps run on the (un-normalized) high-gamma envelope and
+% store their results in sn_obj.stats. The baseline for both significance and
+% normalization is anchored to the first event of each trial (probe_key = 1),
+% which for the brainstorm trial_timing tables is the first word onset; the
+% default baseTimeRange [-0.5 0] therefore captures the pre-word fixation.
+sn_obj.extract_significant_channel();
+sn_obj.extract_time_significance();
+sn_obj.extract_normalization_metrics();
+
 % normalize_signal is inherited from the ieeg_pipeline engine and additionally
 % Gaussian-smooths the high-gamma envelope (so make_trials below captures the
 % smoothed, z-scored signal).
 sn_obj.normalize_signal('normtype', 'z-score');
 sn_obj.make_trials();
 
-fprintf('Baseline z-score (+ engine smoothing) applied. Trials rebuilt.\n');
+fprintf('Significance computed; baseline z-score (+ engine smoothing) applied. Trials rebuilt.\n');
 
 % Optional sharp-artifact detection on the z-scored high-gamma envelope.
 % Results are stored in sn_obj.stats.artifact_stats_unipolar/_bipolar.
