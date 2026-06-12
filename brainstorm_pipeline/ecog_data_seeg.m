@@ -20,7 +20,7 @@ classdef ecog_data_seeg < ecog_data_ieeg
 % Inherited advanced engine methods (NOT overridden here) now come from the
 % ieeg_pipeline engine: extract_high_gamma (incl. doNapLabFilterExtraction),
 % normalize_signal (with envelope smoothing), downsample_signal, make_trials,
-% measure_line_noise, remove_IED, visual_inspection, extract_significant_channel,
+% remove_IED, visual_inspection, extract_significant_channel,
 % extract_time_significance, extract_normalization_metrics (baseline anchored to
 % probe_key=1 via the extract_trial_epochs override), output_data_structures,
 % output_xarray(_minimal), plus (concatenation), etc.
@@ -40,6 +40,10 @@ classdef ecog_data_seeg < ecog_data_ieeg
 %                          50/100/150/... Hz) instead of the 60 Hz US standard,
 %                          and excludes Gaussian high-gamma bands that fall on
 %                          50 Hz harmonics.
+%   - measure_line_noise : measures at the configured line-noise frequency
+%                          (50 Hz here, via the peak filters from define_parameters)
+%                          and reports it, instead of the engine's hardcoded
+%                          "60Hz" log message.
 %   - notch_filter       : reports the actual line-noise frequency (from
 %                          for_preproc.filter_params.line_noise_hz) and runs the
 %                          interactive noisy-channel review.
@@ -244,6 +248,32 @@ methods
 
         fprintf(1,'\nDONE PREPROCESSING SIGNAL \n');
 
+    end
+
+
+    %%
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    % MEASURE LINE NOISE  (50 Hz, not the engine's hardcoded 60 Hz)
+    % Identical to the engine implementation (uses the peak filters built by
+    % define_parameters, i.e. [45 50 55] Hz here), but reports the actual
+    % line-noise frequency instead of the engine's hardcoded "60Hz" message.
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    function signal_noise = measure_line_noise(obj,signal)
+        ln_hz = obj.for_preproc.filter_params.line_noise_hz;
+        fprintf(1, '\n> Measuring %dHz noise power ...\n', ln_hz);
+        fprintf(1,'[');
+
+        peak = obj.for_preproc.peak;
+        signal_noise = zeros(size(signal,2),length(peak));
+
+        for idx_channel=1:size(signal,2)
+            for idx_filter=1:length(peak)
+                signal_noise(idx_channel,idx_filter) = mean(abs(filter(peak{idx_filter}.b,peak{idx_filter}.a,signal(:,idx_channel))));
+            end
+            fprintf(1,'.');
+        end
+
+        fprintf(1,'] done\n');
     end
 
 

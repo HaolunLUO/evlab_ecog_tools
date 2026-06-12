@@ -100,7 +100,7 @@ name with anything in `brainstorm_pipeline/`.
 
 **Inherited from the advanced engine (`@ecog_data_ieeg`), unchanged:**
 `extract_high_gamma`, `normalize_signal` (now Gaussian-smooths the HG envelope),
-`downsample_signal`, `make_trials`, `measure_line_noise`, `highpass_filter`,
+`downsample_signal`, `make_trials`, `highpass_filter`,
 `remove_IED`, `visual_inspection`, `extract_significant_channel`,
 `extract_time_significance`, `extract_normalization_metrics` (baseline anchored
 to `probe_key = 1` via the `extract_trial_epochs` override), `combine_data_files`,
@@ -113,6 +113,7 @@ to `probe_key = 1` via the `extract_trial_epochs` override), `combine_data_files
 | Override | Why it differs for SEEG |
 |----------|--------------------------|
 | `define_parameters()` | 50 Hz line-noise standard (notch 50/100/150/200/250 Hz, peak 45/50/55 Hz) and excludes Gaussian high-gamma bands that land on 50 Hz harmonics (the engine defaults to the 60 Hz US standard) |
+| `measure_line_noise()` | Measures noise power at the configured line-noise frequency (50 Hz, via the peak filters from `define_parameters`) and reports it, instead of the engine's hardcoded `"Measuring 60Hz noise power"` message |
 | `notch_filter()` | Reports the actual line-noise frequency (reads `for_preproc.filter_params.line_noise_hz`) and runs the interactive noisy-channel review (the engine notch is clean-channel-only and non-interactive) |
 | `plot_line_noise()` | 50 Hz axis labels; figure name from `crunched_file_name` |
 | `extract_shanks()` | Operates only on clean channels, so excluded contacts with unparseable labels can't break shank parsing |
