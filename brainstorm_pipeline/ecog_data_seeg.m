@@ -18,10 +18,12 @@ classdef ecog_data_seeg < ecog_data_ieeg
 %     ieeg_pipeline-master with a simple diff.
 %
 % Inherited advanced engine methods (NOT overridden here) now come from the
-% ieeg_pipeline engine: extract_high_gamma, normalize_signal (with envelope
-% smoothing), downsample_signal, make_trials, measure_line_noise, remove_IED,
-% visual_inspection, extract_significant_channel, extract_time_significance,
-% output_data_structures, output_xarray(_minimal), plus (concatenation), etc.
+% ieeg_pipeline engine: extract_high_gamma (incl. doNapLabFilterExtraction),
+% normalize_signal (with envelope smoothing), downsample_signal, make_trials,
+% measure_line_noise, remove_IED, visual_inspection, extract_significant_channel,
+% extract_time_significance, extract_normalization_metrics (baseline anchored to
+% probe_key=1 via the extract_trial_epochs override), output_data_structures,
+% output_xarray(_minimal), plus (concatenation), etc.
 %
 % Additional SEEG-tuned helpers kept on this subclass (thin variants of, or
 % extras alongside, the engine equivalents):
@@ -52,11 +54,13 @@ classdef ecog_data_seeg < ecog_data_ieeg
 %                          bipolar referencing, plus Laplacian-based orders
 %                          ('defaultSEEGLaplacian', 'preEnvelopeExtractionSEEGLaplacian').
 %                          Unrecognized orders are delegated to the engine.
-%   - extract_trial_epochs: string-key epoching ('key','word_1', ...) with the
-%                          window rounded to whole samples (the engine uses a
-%                          numeric probe_key instead).
-%   - extract_normalization_metrics : retains the `key` argument so the baseline
-%                          can be anchored to a word onset (the engine dropped it).
+%   - extract_trial_epochs: supports BOTH a string `key` ('key','word_1', ...)
+%                          and the engine's numeric `probe_key` (default 1), so
+%                          the brainstorm scripts AND the inherited engine
+%                          methods (extract_significant_channel,
+%                          extract_time_significance, extract_normalization_metrics)
+%                          can both anchor epochs. The window is rounded to whole
+%                          samples.
 %   - get_cond_id / get_cond_resp / get_value / get_ave_cond_trial : kept for the
 %                          string condition flags and the exact table layout the
 %                          S-vs-N analysis layer (ecog_sn_data_seeg) consumes.
@@ -883,29 +887,48 @@ methods
     % Returns a 3-D array [nChans x nTrials x nSamples]. Rounds the epoch
     % window to whole samples so non-integer windows cannot produce
     % non-integer indices.
+    %
+    % Supports BOTH anchoring conventions so it works for the brainstorm
+    % scripts AND for the inherited engine methods:
+    %   - 'key'       : string key into trial_timing.key (e.g. 'word_1'). When
+    %                   given (non-empty), the epoch is anchored to that row.
+    %   - 'probe_key' : numeric row index into the per-trial timing table,
+    %                   used when 'key' is empty. Default 1 (first event).
+    % The engine methods (extract_significant_channel, extract_time_significance,
+    % extract_normalization_metrics) call this with only 'epoch_tw', so they fall
+    % back to probe_key = 1.
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     function [trial_data_epoch, trial_bip_data_epoch] = extract_trial_epochs(obj, varargin)
         p = inputParser();
         addParameter(p,'epoch_tw',  [-0.5 3]);
-        addParameter(p,'key',       'fix');
+        addParameter(p,'key',       '');     % string key (optional); empty -> use probe_key
+        addParameter(p,'probe_key', 1);      % numeric row index when key is empty
         addParameter(p,'selectChannels', 1:size(obj.elec_data,1));
+        addParameter(p,'verbose', true);
         parse(p, varargin{:});
         ops = p.Results;
 
         epoch_tw_samples = round(ops.epoch_tw .* obj.sample_freq);
 
-        fprintf(1, '\n> Cutting signal into trial epochs ... \n');
-        fprintf(1,'[');
+        if ops.verbose
+            fprintf(1, '\n> Cutting signal into trial epochs ... \n');
+            fprintf(1,'[');
+        end
         trial_bip_data_epoch = [];
         trial_data_epoch     = [];
 
         for k = 1:size(obj.trial_timing,1)
             trial_time_tbl = obj.trial_timing{k};
-            probe_key = find(ismember(trial_time_tbl.key, ops.key));
-            assert(length(probe_key)==1, 'Key ''%s'' not found or not unique in trial %d', ops.key, k);
 
-            t_start = trial_time_tbl(probe_key,:).start + epoch_tw_samples(1);
-            t_stop  = trial_time_tbl(probe_key,:).start + epoch_tw_samples(2);
+            if ~isempty(ops.key)
+                probe_row = find(ismember(trial_time_tbl.key, ops.key));
+                assert(length(probe_row)==1, 'Key ''%s'' not found or not unique in trial %d', ops.key, k);
+            else
+                probe_row = ops.probe_key;
+            end
+
+            t_start = trial_time_tbl(probe_row,:).start + epoch_tw_samples(1);
+            t_stop  = trial_time_tbl(probe_row,:).start + epoch_tw_samples(2);
 
             trial_data_epoch(:,k,:) = obj.elec_data(ops.selectChannels, t_start:t_stop);
 
@@ -913,63 +936,9 @@ methods
                 trial_bip_data_epoch(:,k,:) = obj.bip_elec_data(:, t_start:t_stop);
             end
 
-            fprintf(1,'.');
+            if ops.verbose; fprintf(1,'.'); end
         end
-        fprintf(1,'] done\n');
-    end
-
-
-    %%
-    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-    % EXTRACT NORMALIZATION METRICS  (retains the `key` baseline anchor)
-    % The ieeg_pipeline engine dropped the `key` argument and samples the
-    % baseline relative to a fixed probe index. The brainstorm trial_timing
-    % tables have no 'fix' marker, so the baseline must be anchored to a named
-    % key (e.g. 'word_1') with the window taken just before it. This mirrors the
-    % MGH_utils/@ecog_data_v2 behaviour and feeds obj.stats.normMetrics, which
-    % the inherited normalize_signal consumes.
-    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-    function extract_normalization_metrics(obj,varargin)
-        p = inputParser();
-        addParameter(p,'baseTimeRange',[-0.5 0]);
-        addParameter(p,'timepad',0.5);
-        addParameter(p,'key','fix');
-        parse(p, varargin{:});
-        epoch_args = p.Results;
-
-        timePad         = epoch_args.timepad;
-        baseTimeRange   = epoch_args.baseTimeRange;
-        baseTimeExtract = [baseTimeRange(1)-timePad baseTimeRange(2)+timePad];
-
-        [baseData,baseData_bip] = obj.extract_trial_epochs('epoch_tw',baseTimeExtract,'key',epoch_args.key);
-        [~,goodtrials] = remove_bad_trials(baseData);
-        goodTrialsCommon = extractCommonTrials(goodtrials);
-
-        fprintf(1, '\n>> Extracting normalization metrics for unipolar high gamma envelope \n');
-        normFactor = zeros(size(baseData, 1), 2);
-        fprintf(1,'[');
-        for iChan = 1:size(baseData, 1)
-            normFactor(iChan, :) = [mean2(squeeze(baseData(iChan, goodTrialsCommon, :))), std2(squeeze(baseData(iChan, goodTrialsCommon, :)))];
-            fprintf(1,'.');
-        end
-        fprintf(1,'] done\n')
-        normMetrics.normFactor = normFactor;
-
-        if(~isempty(baseData_bip))
-            fprintf(1, '\n>> Extracting normalization metrics for bipolar high gamma envelope \n');
-            normFactor = zeros(size(baseData_bip, 1), 2);
-            [~,goodtrials] = remove_bad_trials(baseData_bip);
-            goodTrialsCommon = extractCommonTrials(goodtrials);
-            fprintf(1,'[');
-            for iChan = 1:size(baseData_bip, 1)
-                normFactor(iChan, :) = [mean2(squeeze(baseData_bip(iChan, goodTrialsCommon, :))), std2(squeeze(baseData_bip(iChan, goodTrialsCommon, :)))];
-                fprintf(1,'.');
-            end
-            fprintf(1,'] done\n')
-            normMetrics.normFactor_bip = normFactor;
-        end
-
-        obj.stats.normMetrics = normMetrics;
+        if ops.verbose; fprintf(1,'] done\n'); end
     end
 
 
