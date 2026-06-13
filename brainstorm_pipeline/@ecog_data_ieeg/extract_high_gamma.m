@@ -120,14 +120,11 @@ function extract_high_gamma(obj,ops)
             freqRange = [obj.for_preproc.filter_params.bandpass.f_gamma_low obj.for_preproc.filter_params.bandpass.f_gamma_high];
              % --- UNIPOLAR ---
             fprintf(1, '\n>> Extracting unipolar high gamma envelope based on NAPLAB gaussian filtering \n');
-            fprintf(1,'[');
 
-            
-
-            [dh,cfs,sigma_fs] = CUprocessingHilbertTransform_filterbankGUI(signal_', obj.sample_freq, freqRange);
-            signal_hilbert = mean(abs(dh),3); 
-            
-            fprintf(1,'] done\n');
+            % CUprocessingHilbertTransform_filterbankGUI now returns the
+            % band-averaged envelope directly ([channels x time]) to avoid
+            % allocating the full [channels x time x band] cube.
+            [signal_hilbert,cfs,sigma_fs] = CUprocessingHilbertTransform_filterbankGUI(signal_', obj.sample_freq, freqRange);
 
             signal(obj.stitch_index(k):stop,:) = signal_hilbert';
 
@@ -135,15 +132,10 @@ function extract_high_gamma(obj,ops)
             % --- BIPOLAR ---
             if ~isempty(obj.bip_elec_data)
                 fprintf(1, '\n>> Extracting bipolar high gamma envelope based on NAPLAB gaussian filtering \n');
-                fprintf(1,'[');
 
                 signal_bipolar_ = signal_bipolar(obj.stitch_index(k):stop,:);
-                
 
-                [dh,cfs,sigma_fs] = CUprocessingHilbertTransform_filterbankGUI(signal_bipolar_', obj.sample_freq, freqRange);
-                signal_hilbert_bipolar = mean(abs(dh),3);
-
-                
+                [signal_hilbert_bipolar,cfs,sigma_fs] = CUprocessingHilbertTransform_filterbankGUI(signal_bipolar_', obj.sample_freq, freqRange);
 
                 signal_bipolar(obj.stitch_index(k):stop,:) = signal_hilbert_bipolar';
                 
@@ -199,13 +191,21 @@ function [filteredData,cfs,sigma_fs,hilbdata]=CUprocessingHilbertTransform_filte
 
 % This function is used in EcogExtractHighGamma.m
 %{
-PURPOSE: Perform Hilbert transform
+PURPOSE: Perform a Hilbert-transform Gaussian filterbank and return the
+         high-gamma envelope averaged across the filterbank bands.
 
-INPUTS: ecog data structure
-        Sampling frequency
-        Optional: frequency range for window (2 element array with low frequency first)-- if no input, go to default range
+INPUTS: d         - [channels x time] signal
+        Fs        - sampling frequency
+        freqRange - frequency range for the filterbank (2 element array with
+                    low frequency first)
 
-OUTPUT: filtered data structure
+OUTPUT: filteredData - [channels x time] envelope averaged across bands.
+                       (Previously this returned the full
+                       [channels x time x band] cube, but that array could be
+                       hundreds of GB for long recordings; the across-band
+                       mean is computed incrementally instead.)
+        cfs          - center frequencies of the retained bands
+        sigma_fs     - band sigmas
 %}
 
 %********CHANGE, allow for multiband freqRange*************
@@ -266,27 +266,33 @@ else
     h(1) = 1; h(2:(T+1)/2) = 2;
 end
 
-%CHANGE: vectorize across channels, take out loop*******************
-%x=fft(ecog.data,nfft,2);
-filteredData = zeros(size(d,1),T,npbs);
+% Compute the band-averaged high-gamma envelope directly.
+%
+% The previous implementation allocated the full complex/real
+% [channels x time x band] cube (filteredData = zeros(size(d,1),T,npbs)) and
+% only afterwards collapsed it with mean(abs(...),3). For long iEEG/SEEG
+% recordings that cube is enormous (e.g. 214 x 8298001 x 8 doubles ~= 105 GB)
+% and MATLAB refuses to allocate it. Since every caller only needs the
+% across-band mean of the envelope, we accumulate it one channel/band at a
+% time and return a single [channels x time] matrix. This keeps peak memory
+% to a few time-length vectors plus the output, instead of the whole cube.
+filteredData = zeros(size(d,1),T);
 fprintf(1,'[');
 for c=1:size(d,1)
     adat=fft(d(c,:),T);
+    envSum = zeros(1,T);
     for f=1:npbs
         H = zeros(1,T);
         k = freqs-cfs(f);
         H(1:nfreqs) = exp((-0.5).*((k./sds(f)).^2));
         H(nfreqs+1:end)=fliplr(H(2:ceil(T/2)));
         H(1)=0;
-        hilbdata=ifft(adat(end,:).*(H.*h),T);
-        envData=abs(hilbdata);
-        %phaseData=angle(hilbdata);
-        filteredData(c,:,f)=hilbdata;
-        %phaseInfo.data(c,:,f)=phaseData;
+        hilbdata=ifft(adat.*(H.*h),T);
+        envSum = envSum + abs(hilbdata); % accumulate envelope across bands
     end
+    filteredData(c,:) = envSum / npbs; % mean envelope across bands
     fprintf(1,'.');
 end
 fprintf(1,'] done\n')
-filteredData = abs(filteredData);
 
 end

@@ -75,37 +75,35 @@ function remove_IED(obj)
 
     
 
-    % Display total number of electrodes with IEDs
+    % Display total number of electrodes with IEDs.
+    % NOTE: obj.elec_ch is a column vector ([nChannels x 1], created as
+    % (1:nChannels)' in the conversion), so the total channel count must be
+    % taken with numel(). Using size(obj.elec_ch,2) returned 1 regardless of
+    % how many channels there were, which made the skip threshold ceil(1/3)=1
+    % and incorrectly aborted IED removal (e.g. "16 / 1 (1600.0%)").
     nIED    = length(tableChanSelection.indChansDeselected);
-    nTotal  = size(obj.elec_ch, 2);   % elec_ch is 1×N
+    nTotal  = numel(obj.elec_ch);
     pctIED  = 100 * nIED / nTotal;
     thresh  = ceil(nTotal / 3);
-    
+
     fprintf('  Electrodes with IEDs:  %d / %d (%.1f%%) — threshold: >%d\n', ...
         nIED, nTotal, pctIED, thresh);
-    
+
+    % Single decision point: skip the step if too many electrodes were flagged,
+    % otherwise mark the IED electrodes and recompute the clean-channel set.
     if nIED > thresh
         fprintf('  *** Too many electrodes with significant IEDs, SKIPPING STEP ***\n');
-        new_order_mask = cell2mat(cellfun(@(x) strcmp(x,'IEDRemoval'), ...
-            obj.for_preproc.order, 'UniformOutput', false));
-        obj.for_preproc.order = obj.for_preproc.order(~new_order_mask);
-    else
-        fprintf('  IED count within threshold — proceeding with IED removal\n');
-    end
-
-
-    % check if too many electrodes were removed
-    if length(tableChanSelection.indChansDeselected) > ceil(size(obj.elec_ch,2)/3)
-        fprintf(1,'Too many electrodes with significant IEDs, SKIPPING STEP\n')
 
         new_order_mask = cell2mat(cellfun(@(x) strcmp(x,'IEDRemoval'),obj.for_preproc.order,'UniformOutput',false));
         obj.for_preproc.order = obj.for_preproc.order(~new_order_mask);
 
-    else 
+    else
+        fprintf('  IED count within threshold — proceeding with IED removal\n');
+
         obj.elec_ch_with_IED = tableChanSelection.indChansDeselected;
         obj.elec_ch_with_IED = intersect(obj.elec_ch_clean,obj.elec_ch_with_IED); % don't mark already noisy electrodes
         obj.define_clean_channels();
-        
+
         fprintf(1,'Electrodes with significant IEDs: ');
         fprintf(1,'%d ', obj.elec_ch_with_IED(:)); fprintf('\n');
 
