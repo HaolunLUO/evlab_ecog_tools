@@ -57,12 +57,12 @@ useROIfromSource = false;
 roiSourceTask    = 'MITSWJNTask';
 
 % --- Re-run control ---
-forceRebuildCrunched = true;
+forceRebuildCrunched = false;
 forceReprocess       = true;
 
 % --- UI control ---
-isPlotVisible        = true;
-doneVisualInspection = false;
+isPlotVisible        = false;
+doneVisualInspection = true;
 
 % --- Preprocessing / feature extraction (ieeg_pipeline engine) ---
 % Broadband referencing -> NAPLAB high-gamma envelope -> downsample, followed
