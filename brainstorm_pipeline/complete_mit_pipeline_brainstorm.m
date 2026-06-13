@@ -74,6 +74,21 @@ preprocOrder   = 'defaultSEEGorBOTHBroadBand';  % highpass,notch,IED,CAR,Laplaci
 decimationFreq = 200;                            % Hz, for downsample_signal
 detectSharpArtifacts = true;                    % optional sharp-transient QC after z-scoring
 
+% --- Language channel selection / statistics (ecog_MITLangloc-master features) ---
+% Split-half cross-validation: odd trials drive selection (inference), even
+% trials are reserved for plotting and held-out effect sizes (avoids
+% double-dipping). Applies to test_s_vs_n, lang_resp_plots, and the effect
+% size / word-level analyses below.
+useOddForInference   = true;
+% Held-out effect sizes (computed on even trials):
+computeEffectSizes   = true;   % compute_hg_power_diff_s_vs_n + compute_hg_sn_corr
+% Word-level selection (per-word permutation + consecutiveness criterion):
+doWordwiseLangloc    = true;   % test_s_vs_n_wordwise
+wordwiseMinConsec    = 3;      % require this many (consecutive) significant words
+% Word-boundaries cluster-based time-series permutation test:
+doWordBoundaries     = false;  % test_s_vs_n_wordboundaries (slower; needs timePermCluster)
+wordBoundaryEpoch    = [-0.25 0.25];
+
 % --- Paths (EDIT THESE) ---
 workingDir  = 'F:\seeg\luohong\analysisEV';
 anatomyPath = fullfile(workingDir, 'anatomy\');
@@ -423,7 +438,49 @@ if ~applyROI
         'n_rep', 10000, ...
         'threshold', 0.05, ...
         'side', 'right', ...
+        'use_odd_for_inference', useOddForInference, ...
         'do_plot', true);
+
+    % --- Held-out effect sizes (even trials) ---
+    if computeEffectSizes
+        fprintf('Computing held-out HG effect sizes (S - N power diff + S/N correlation)\n');
+        sn_obj.compute_hg_power_diff_s_vs_n('words', taskConfig.testWords, ...
+            'S_condition_flag', taskConfig.S_condition, ...
+            'N_condition_flag', taskConfig.N_condition, ...
+            'use_odd_for_inference', useOddForInference);
+        sn_obj.compute_hg_sn_corr('words', taskConfig.testWords, ...
+            'S_condition_flag', taskConfig.S_condition, ...
+            'N_condition_flag', taskConfig.N_condition);
+    end
+
+    % --- Word-level selection (per-word permutation + consecutiveness) ---
+    if doWordwiseLangloc
+        fprintf('Running word-wise langloc (min_consecutive=%d)\n', wordwiseMinConsec);
+        sn_obj.test_s_vs_n_wordwise('words', taskConfig.testWords, ...
+            'S_condition_flag', taskConfig.S_condition, ...
+            'N_condition_flag', taskConfig.N_condition, ...
+            'n_rep', 1000, ...
+            'corr_type', 'Spearman', ...
+            'threshold', 0.05, ...
+            'side', 'right', ...
+            'min_consecutive', wordwiseMinConsec, ...
+            'consecutiveness', true, ...
+            'use_odd_for_inference', useOddForInference);
+    end
+
+    % --- Word-boundaries cluster-based time-series permutation test ---
+    if doWordBoundaries
+        fprintf('Running word-boundaries time-series cluster permutation test\n');
+        sn_obj.test_s_vs_n_wordboundaries(...
+            'S_condition_flag', taskConfig.S_condition, ...
+            'N_condition_flag', taskConfig.N_condition, ...
+            'n_rep', 1000, ...
+            'threshold', 0.05, ...
+            'epoch_range', wordBoundaryEpoch, ...
+            'num_words', numel(taskConfig.testWords), ...
+            'use_odd_for_inference', useOddForInference, ...
+            'do_plot', false);
+    end
 
     if useROIfromSource && strcmpi(taskType, roiSourceTask)
         save_roi_from_sn_obj(sn_obj, roiFile, roiSourceTask);
@@ -601,6 +658,28 @@ end
 
 groupResult.sample_freq = sn_obj.sample_freq;
 groupResult.nWords      = numel(taskConfig.testWords);
+
+% --- Held-out effect sizes (even trials) ---
+if computeEffectSizes && ~isempty(sn_obj.hg_power_diff)
+    groupResult.hg_power_diff = sn_obj.hg_power_diff.results;
+end
+if computeEffectSizes && ~isempty(sn_obj.hg_sn_corr)
+    groupResult.hg_sn_corr = sn_obj.hg_sn_corr.results;
+end
+
+% --- Word-wise language selection ---
+if doWordwiseLangloc && ~isempty(sn_obj.langloc_wordwise)
+    groupResult.langloc_wordwise = sn_obj.langloc_wordwise.results;
+    if isfield(sn_obj.langloc_wordwise.results, 'unipolar')
+        groupResult.sig_wordwise_uni = sn_obj.langloc_wordwise.results.unipolar.is_sig;
+        groupResult.nSigWordwise     = sum(groupResult.sig_wordwise_uni);
+    end
+end
+
+% --- Word-boundaries time-series selection ---
+if doWordBoundaries && ~isempty(sn_obj.s_vs_n_wordboundaries_sigUnipolarChannels)
+    groupResult.sig_wordboundaries_uni = sn_obj.s_vs_n_wordboundaries_sigUnipolarChannels;
+end
 
 try
     [S_tc, ~] = sn_obj.get_timecourses('words', taskConfig.testWords, 'condition', taskConfig.S_condition, 'signalType', 'unipolar');
