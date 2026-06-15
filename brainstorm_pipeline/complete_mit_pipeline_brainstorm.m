@@ -46,7 +46,9 @@
 %% ========================================================================
 
 clear; clc; close all;
-repoRoot = fileparts(fileparts(mfilename('fullpath')));
+scriptDir = fileparts(mfilename('fullpath'));
+repoRoot  = fileparts(scriptDir);
+addpath(scriptDir);
 addpath(genpath(fullfile(repoRoot, 'brainstorm_pipeline')));
 addpath(genpath(repoRoot));
 addpath(genpath(fullfile(repoRoot, 'ieeg_pipeline-master', 'ieeg_pipeline-master', 'utils', 'kumar_ieeg_utils')));
@@ -96,7 +98,7 @@ wordBoundaryEpoch    = [-0.25 0.25];
 % Requires MATLAB Report Generator (mlreportgen). Runs for MITSWJNTask and
 % MITLangloc only; saves PDF to output/<taskType>/.
 generateLanglocReport = true;
-useLanglocReportV2    = true;   % false -> generateReportLangloc (v1)
+useLanglocReportV2    = true;  % v2: includes LangLoc Responsive Electrodes chapter
 
 % --- Paths (EDIT THESE) ---
 workingDir  = 'F:\seeg\luohong\analysisEV';
@@ -752,6 +754,7 @@ if generateLanglocReport
             params.SubjectName, useLanglocReportV2);
     catch ME
         warning('Langloc report generation failed (non-fatal): %s', ME.message);
+        fprintf('%s\n', getReport(ME, 'extended', 'hyperlinks', 'off'));
         if contains(ME.message, 'mlreportgen') || contains(ME.identifier, 'MATLAB:UndefinedFunction')
             fprintf(['  Tip: install MATLAB Report Generator, or set ' ...
                 'generateLanglocReport = false.\n']);

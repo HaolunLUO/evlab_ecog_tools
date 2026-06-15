@@ -24,6 +24,7 @@ function generateReportLangloc_v2(obj, reportName)
     import mlreportgen.dom.*
 
     tempFolder = tempdir;
+    tempFiles = {};
     
     % Create report object with title page
     rpt = Report(pdfFileName, 'pdf');
@@ -116,16 +117,23 @@ function generateReportLangloc_v2(obj, reportName)
     % Process only langloc experiments
     switch obj.experiment
         case {'LangLocVisual','LangLoc','MITLangloc'}
+            if strcmp(obj.experiment, 'MITLangloc')
+                sentLabel = 'Sentences';
+                nonsentLabel = 'Jabberwocky';
+            else
+                sentLabel = 'sentence';
+                nonsentLabel = 'nonword';
+            end
             mean_rt_all = mean(rt_correct, 'omitnan');
-            mean_rt_sentence = mean(rt_correct(strcmp(cond_correct, 'sentence')), 'omitnan');
-            mean_rt_nonword = mean(rt_correct(strcmp(cond_correct, 'nonword')), 'omitnan');
+            mean_rt_sentence = mean(rt_correct(strcmp(cond_correct, sentLabel)), 'omitnan');
+            mean_rt_nonword = mean(rt_correct(strcmp(cond_correct, nonsentLabel)), 'omitnan');
         
             % Results Table
             tableContent = {
                 'Condition', 'Mean RT (ms)';
                 'Overall', sprintf('%6.1f ± %.1f', mean_rt_all*1000, std(rt_correct)*1000);
-                'Sentence (S)', sprintf('%6.1f ± %.1f', mean_rt_sentence*1000, std(rt_correct(strcmp(cond_correct, 'sentence')))*1000);
-                'Nonword (N)', sprintf('%6.1f ± %.1f', mean_rt_nonword*1000, std(rt_correct(strcmp(cond_correct, 'nonword')))*1000)
+                'Sentence (S)', sprintf('%6.1f ± %.1f', mean_rt_sentence*1000, std(rt_correct(strcmp(cond_correct, sentLabel)))*1000);
+                'Nonword (N)', sprintf('%6.1f ± %.1f', mean_rt_nonword*1000, std(rt_correct(strcmp(cond_correct, nonsentLabel)))*1000)
             };
             % Validate all entries are strings
             for i = 1:size(tableContent, 1)
@@ -149,13 +157,13 @@ function generateReportLangloc_v2(obj, reportName)
                 f = figure('Visible', 'off', 'Position', [100 100 800 600]);
             end
             subplot(1,2,1)
-            histogram(rt_correct(strcmp(cond_correct, 'sentence'))*1000, 'BinWidth', 50)
+            histogram(rt_correct(strcmp(cond_correct, sentLabel))*1000, 'BinWidth', 50)
             title('Sentence Condition RT Distribution')
             xlabel('Reaction Time (ms)')
             ylabel('Frequency')
         
             subplot(1,2,2)
-            histogram(rt_correct(strcmp(cond_correct, 'nonword'))*1000, 'BinWidth', 50)
+            histogram(rt_correct(strcmp(cond_correct, nonsentLabel))*1000, 'BinWidth', 50)
             title('Nonword Condition RT Distribution')
             xlabel('Reaction Time (ms)')
             ylabel('Frequency')
@@ -165,7 +173,9 @@ function generateReportLangloc_v2(obj, reportName)
             add(rpt, imgObj);
             add(rpt, PageBreak());
 
-            
+            % LangLoc responsive electrodes (dysoc-style, per significant channel)
+            tempFiles = [tempFiles, append_responsive_electrodes_chapter(rpt, obj, tempFolder)];
+
             % High Gamma Plot Generation
             add(rpt, Heading2('High Gamma Plots'));
             conditionImages = high_gamma_plot_langloc(obj);
@@ -183,7 +193,9 @@ function generateReportLangloc_v2(obj, reportName)
                     add(rpt, imgObj);
                     add(rpt, PageBreak());
                 end
-                deleteTemporaryFiles(imageFiles)
+                % Defer deletion until after close(rpt): PDF embeds images at
+                % close time, so deleting here causes fl:filesystem:PathNotFound.
+                tempFiles = [tempFiles, imageFiles];
             end
             
         case {'LangLocAudio','LangLocAudio-2'}
@@ -251,49 +263,9 @@ function generateReportLangloc_v2(obj, reportName)
             imgObj = addImageToReport(tempFolder, f);
             add(rpt, imgObj);
             add(rpt, PageBreak());
-             tempFiles = {};
-            % ================================================================
-            % NEW: LangLoc responsive Electrodes – Dysoc-style visualization
-            % ================================================================
-            add(rpt, Chapter('LangLoc Responsive Electrodes'));
-            add(rpt, Paragraph(['Electrodes with significant language responsiveness ' ...
-                '(Sentences > Nonwords, cluster-corrected p < 0.05). ' ...
-                'Layout: split-half scatter (top-left), mean HG per condition (top-right), ' ...
-                'full time series (bottom).']));
-            
-            [selImgs_uni, selImgs_bip] = plot_langloc_responsive_dysoc(obj, tempFolder);
-            
-            if ~isempty(selImgs_uni)
-                add(rpt, Heading2('Unipolar Responsive Electrodes'));
-                for k = 1:numel(selImgs_uni)
-                    imgObj = Image(selImgs_uni{k});
-                    imgObj.Width  = '6in';
-                    imgObj.Height = '7.5in';
-                    add(rpt, imgObj);
-                    add(rpt, PageBreak());
-                end
-               % deleteTemporaryFiles(selImgs_uni);
-                 tempFiles = [tempFiles, selImgs_uni];
-            else
-                add(rpt, Paragraph('No responsive unipolar electrodes found.'));
-            end
-            
-            if ~isempty(selImgs_bip)
-                add(rpt, Heading2('Bipolar Responsive Electrodes'));
-                for k = 1:numel(selImgs_bip)
-                    imgObj = Image(selImgs_bip{k});
-                    imgObj.Width  = '6in';
-                    imgObj.Height = '7.5in';
-                    add(rpt, imgObj);
-                    add(rpt, PageBreak());
-                end
-               % deleteTemporaryFiles(selImgs_bip);
-               tempFiles = [tempFiles, selImgs_bip];
-            end
-            % ================================================================
+            tempFiles = {};
+            tempFiles = [tempFiles, append_responsive_electrodes_chapter(rpt, obj, tempFolder)];
 
-
-        
             % High Gamma Plot Generation
             add(rpt, Heading2('High Gamma Plots'));
             conditionImages = high_gamma_plot_word_boundaries_langloc(obj);
@@ -354,38 +326,7 @@ function generateReportLangloc_v2(obj, reportName)
 
      % Add summary report of significant channels
     add(rpt, Chapter('Summary of Significant LangLoc Channels'));
-
-    % Unipolar channels
-    add(rpt, Heading2('Unipolar Channels with Significant Time Clusters'));
-    sigChannels = sum(cellfun(@(x) any(cell2mat(arrayfun(@(y) any(y.h_sig_05), x, 'UniformOutput', false))), (obj.stats.time_series.pSigChan_wordboundaries_langloc)'));
-    sigUnipolarChannels = find(sigChannels>0);
-    if ~isempty(sigUnipolarChannels)
-        unipolarList = cell(length(sigUnipolarChannels), 1);
-        for i = 1:length(sigUnipolarChannels)
-            unipolarList{i} = obj.elec_ch_label{sigUnipolarChannels(i)};
-        end
-        add(rpt, UnorderedList(unipolarList));
-        add(rpt, PageBreak());
-    else
-        add(rpt, Paragraph('No significant langloc unipolar channels found.'));
-    end
-
-    % Bipolar channels
-    if(isfield(obj.stats.time_series,'pSigChan_bip'))
-        add(rpt, Heading2('Bipolar Channels with Significant Time Clusters'));
-        sigChannels = sum(cellfun(@(x) any(cell2mat(arrayfun(@(y) any(y.h_sig_05), x, 'UniformOutput', false))), (obj.stats.time_series.pSigChan_bip_wordboundaries_langloc)'));
-        sigBipolarChannels = find(sigChannels>0);
-        if ~isempty(sigBipolarChannels)
-            bipolarList = cell(length(sigBipolarChannels), 1);
-            for i = 1:length(sigBipolarChannels)
-                bipolarList{i} = obj.bip_ch_label{sigBipolarChannels(i)};
-            end
-            add(rpt, UnorderedList(bipolarList));
-            add(rpt, PageBreak());
-        else
-            add(rpt, Paragraph('No significant langloc bipolar channels found.'));
-        end
-    end
+    add_langloc_channel_summary(rpt, obj);
 
     % Close the PDF document   
     try
@@ -408,14 +349,59 @@ function generateReportLangloc_v2(obj, reportName)
 end
 
 % -----------------------------------------------------------------------
+function newTempFiles = append_responsive_electrodes_chapter(rpt, obj, tempFolder)
+% Add dysoc-style LangLoc responsive electrode figures to the PDF report.
+
+import mlreportgen.report.*
+import mlreportgen.dom.*
+
+newTempFiles = {};
+
+add(rpt, Chapter('LangLoc Responsive Electrodes'));
+add(rpt, Paragraph(['Electrodes with significant language responsiveness ' ...
+    '(Sentences > Nonwords, cluster-corrected p < 0.05). ' ...
+    'Layout: split-half scatter (top-left), mean HG per condition (top-right), ' ...
+    'word-boundary time series (bottom).']));
+
+[selImgs_uni, selImgs_bip] = plot_langloc_responsive_dysoc(obj, tempFolder);
+
+if ~isempty(selImgs_uni)
+    add(rpt, Heading2('Unipolar Responsive Electrodes'));
+    for k = 1:numel(selImgs_uni)
+        imgObj = Image(selImgs_uni{k});
+        imgObj.Width  = '6in';
+        imgObj.Height = '7.5in';
+        add(rpt, imgObj);
+        add(rpt, PageBreak());
+    end
+    newTempFiles = [newTempFiles, selImgs_uni];
+else
+    add(rpt, Paragraph('No responsive unipolar electrodes found.'));
+end
+
+if ~isempty(selImgs_bip)
+    add(rpt, Heading2('Bipolar Responsive Electrodes'));
+    for k = 1:numel(selImgs_bip)
+        imgObj = Image(selImgs_bip{k});
+        imgObj.Width  = '6in';
+        imgObj.Height = '7.5in';
+        add(rpt, imgObj);
+        add(rpt, PageBreak());
+    end
+    newTempFiles = [newTempFiles, selImgs_bip];
+end
+end
+
+% -----------------------------------------------------------------------
 function [imageFiles_uni, imageFiles_bip] = plot_langloc_responsive_dysoc(obj, tempFolder)
 % Dysoc-style per-electrode plots for langloc-responsive channels (S > N).
 % Uses word-boundary concatenation to handle variable stimulus durations.
 
 epochTimeRange = [-0.5 0.5];
-numWords       = 12;
 colors         = [0 0.4470 0.7410; 0.8500 0.3250 0.0980];  % blue / red
 conds          = obj.condition;
+
+numWords = infer_report_num_words(obj);
 
 if contains(obj.experiment, 'MITLangloc')
     conditions = {'Sentences', 'Jabberwocky'};
@@ -425,15 +411,26 @@ else
     condLabels = {'Sentences', 'Nonwords'};
 end
 
-% ---- Extract per-word epochs and concatenate (mirrors word_boundaries function) ----
-fprintf('plot_langloc_responsive_dysoc: extracting per-word epochs...\n');
+if ~any(ismember(conds, conditions{1})) || ~any(ismember(conds, conditions{2}))
+    warning('plot_langloc_responsive_dysoc: conditions "%s" and "%s" not found. Available: %s', ...
+        conditions{1}, conditions{2}, strjoin(unique(conds), ', '));
+    imageFiles_uni = {};
+    imageFiles_bip = {};
+    return;
+end
+
+% ---- Extract per-word epochs and concatenate ----
+fprintf('plot_langloc_responsive_dysoc: extracting per-word epochs (%d words)...\n', numWords);
 concatS = []; concatN = []; concatS_bip = []; concatN_bip = [];
-epochData_bip_ref = [];
 
 for wordPos = 1:numWords
     fprintf('  Word position %d/%d...\n', wordPos, numWords);
-    [epochData, epochData_bip] = obj.extract_trial_epochs( ...
-        'epoch_tw', epochTimeRange, 'probe_key', wordPos + 1);
+    [epochData, epochData_bip] = extract_word_position_epochs(obj, epochTimeRange, wordPos);
+
+    if isempty(epochData)
+        warning('plot_langloc_responsive_dysoc: no data for word position %d; stopping.', wordPos);
+        break;
+    end
 
     concatS = cat(3, concatS, epochData(:, ismember(conds, conditions{1}), :));
     concatN = cat(3, concatN, epochData(:, ismember(conds, conditions{2}), :));
@@ -441,11 +438,16 @@ for wordPos = 1:numWords
     if ~isempty(epochData_bip)
         concatS_bip = cat(3, concatS_bip, epochData_bip(:, ismember(conds, conditions{1}), :));
         concatN_bip = cat(3, concatN_bip, epochData_bip(:, ismember(conds, conditions{2}), :));
-        epochData_bip_ref = epochData_bip;
     end
 end
 
-% Word-boundary geometry
+if isempty(concatS)
+    warning('plot_langloc_responsive_dysoc: no concatenated epoch data.');
+    imageFiles_uni = {};
+    imageFiles_bip = {};
+    return;
+end
+
 timePointsPerWord = size(concatS, 3) / numWords;
 totalTimePoints   = timePointsPerWord * numWords;
 wordBoundaries    = 0 : timePointsPerWord : totalTimePoints;
@@ -478,7 +480,7 @@ if ~isempty(concatS_bip)
     fprintf('  Found %d responsive bipolar electrodes.\n', numel(responsiveIdx_bip));
 end
 
-chanLab_uni = obj.elec_ch_label(obj.elec_ch_valid);
+chanLab_uni = obj.elec_ch_label(obj.elec_ch_clean);
 
 % Store stats for optional reuse downstream
 obj.stats.time_series.pSigChan_langloc_responsive_uni = pSig_uni;
@@ -1139,6 +1141,41 @@ function imageFiles = process_and_save_images_word_boundaries_langloc(obj, ...
 
     fprintf('    %s analysis completed: %d channels, %d significant channels\n', ...
         upper(dataType), size(dataSentence, 1), totalSigChannels);
+end
+
+
+function numWords = infer_report_num_words(obj)
+% Word count for responsive-electrode / word-boundary analyses.
+
+if isprop(obj, 'report_numWords') && ~isempty(obj.report_numWords)
+    numWords = obj.report_numWords;
+    return;
+end
+
+if ~isempty(obj.trial_timing)
+    numWords = height(obj.trial_timing{1});
+    return;
+end
+
+numWords = 12;
+end
+
+
+function [epochData, epochData_bip] = extract_word_position_epochs(obj, epochTimeRange, wordPos)
+% Epoch HG around word onset for one word position (Brainstorm + BCI2000).
+
+keyName = sprintf('word_%d', wordPos);
+epochArgs = {'epoch_tw', epochTimeRange, 'selectChannels', obj.elec_ch_clean, 'verbose', false};
+
+if ~isempty(obj.trial_timing)
+    trialKeys = obj.trial_timing{1}.key;
+    if any(strcmp(trialKeys, keyName))
+        [epochData, epochData_bip] = obj.extract_trial_epochs(epochArgs{:}, 'key', keyName);
+        return;
+    end
+end
+
+[epochData, epochData_bip] = obj.extract_trial_epochs(epochArgs{:}, 'probe_key', wordPos);
 end
 
 

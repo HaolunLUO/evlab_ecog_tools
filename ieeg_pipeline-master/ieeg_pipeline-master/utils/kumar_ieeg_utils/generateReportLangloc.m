@@ -24,6 +24,7 @@ function generateReportLangloc(obj, reportName)
     import mlreportgen.dom.*
 
     tempFolder = tempdir;
+    tempFiles = {};
     
     % Create report object with title page
     rpt = Report(pdfFileName, 'pdf');
@@ -116,16 +117,23 @@ function generateReportLangloc(obj, reportName)
     % Process only langloc experiments
     switch obj.experiment
         case {'LangLocVisual','LangLoc','MITLangloc'}
+            if strcmp(obj.experiment, 'MITLangloc')
+                sentLabel = 'Sentences';
+                nonsentLabel = 'Jabberwocky';
+            else
+                sentLabel = 'sentence';
+                nonsentLabel = 'nonword';
+            end
             mean_rt_all = mean(rt_correct, 'omitnan');
-            mean_rt_sentence = mean(rt_correct(strcmp(cond_correct, 'sentence')), 'omitnan');
-            mean_rt_nonword = mean(rt_correct(strcmp(cond_correct, 'nonword')), 'omitnan');
+            mean_rt_sentence = mean(rt_correct(strcmp(cond_correct, sentLabel)), 'omitnan');
+            mean_rt_nonword = mean(rt_correct(strcmp(cond_correct, nonsentLabel)), 'omitnan');
         
             % Results Table
             tableContent = {
                 'Condition', 'Mean RT (ms)';
                 'Overall', sprintf('%6.1f ± %.1f', mean_rt_all*1000, std(rt_correct)*1000);
-                'Sentence (S)', sprintf('%6.1f ± %.1f', mean_rt_sentence*1000, std(rt_correct(strcmp(cond_correct, 'sentence')))*1000);
-                'Nonword (N)', sprintf('%6.1f ± %.1f', mean_rt_nonword*1000, std(rt_correct(strcmp(cond_correct, 'nonword')))*1000)
+                'Sentence (S)', sprintf('%6.1f ± %.1f', mean_rt_sentence*1000, std(rt_correct(strcmp(cond_correct, sentLabel)))*1000);
+                'Nonword (N)', sprintf('%6.1f ± %.1f', mean_rt_nonword*1000, std(rt_correct(strcmp(cond_correct, nonsentLabel)))*1000)
             };
             % Validate all entries are strings
             for i = 1:size(tableContent, 1)
@@ -149,13 +157,13 @@ function generateReportLangloc(obj, reportName)
                 f = figure('Visible', 'off', 'Position', [100 100 800 600]);
             end
             subplot(1,2,1)
-            histogram(rt_correct(strcmp(cond_correct, 'sentence'))*1000, 'BinWidth', 50)
+            histogram(rt_correct(strcmp(cond_correct, sentLabel))*1000, 'BinWidth', 50)
             title('Sentence Condition RT Distribution')
             xlabel('Reaction Time (ms)')
             ylabel('Frequency')
         
             subplot(1,2,2)
-            histogram(rt_correct(strcmp(cond_correct, 'nonword'))*1000, 'BinWidth', 50)
+            histogram(rt_correct(strcmp(cond_correct, nonsentLabel))*1000, 'BinWidth', 50)
             title('Nonword Condition RT Distribution')
             xlabel('Reaction Time (ms)')
             ylabel('Frequency')
@@ -182,7 +190,9 @@ function generateReportLangloc(obj, reportName)
                     add(rpt, imgObj);
                     add(rpt, PageBreak());
                 end
-                deleteTemporaryFiles(imageFiles)
+                % Defer deletion until after close(rpt): PDF embeds images at
+                % close time, so deleting here causes fl:filesystem:PathNotFound.
+                tempFiles = [tempFiles, imageFiles];
             end
             
         case {'LangLocAudio','LangLocAudio-2'}
@@ -311,38 +321,7 @@ function generateReportLangloc(obj, reportName)
 
      % Add summary report of significant channels
     add(rpt, Chapter('Summary of Significant LangLoc Channels'));
-
-    % Unipolar channels
-    add(rpt, Heading2('Unipolar Channels with Significant Time Clusters'));
-    sigChannels = sum(cellfun(@(x) any(cell2mat(arrayfun(@(y) any(y.h_sig_05), x, 'UniformOutput', false))), (obj.stats.time_series.pSigChan_wordboundaries_langloc)'));
-    sigUnipolarChannels = find(sigChannels>0);
-    if ~isempty(sigUnipolarChannels)
-        unipolarList = cell(length(sigUnipolarChannels), 1);
-        for i = 1:length(sigUnipolarChannels)
-            unipolarList{i} = obj.elec_ch_label{sigUnipolarChannels(i)};
-        end
-        add(rpt, UnorderedList(unipolarList));
-        add(rpt, PageBreak());
-    else
-        add(rpt, Paragraph('No significant langloc unipolar channels found.'));
-    end
-
-    % Bipolar channels
-    if(isfield(obj.stats.time_series,'pSigChan_bip'))
-        add(rpt, Heading2('Bipolar Channels with Significant Time Clusters'));
-        sigChannels = sum(cellfun(@(x) any(cell2mat(arrayfun(@(y) any(y.h_sig_05), x, 'UniformOutput', false))), (obj.stats.time_series.pSigChan_bip_wordboundaries_langloc)'));
-        sigBipolarChannels = find(sigChannels>0);
-        if ~isempty(sigBipolarChannels)
-            bipolarList = cell(length(sigBipolarChannels), 1);
-            for i = 1:length(sigBipolarChannels)
-                bipolarList{i} = obj.bip_ch_label{sigBipolarChannels(i)};
-            end
-            add(rpt, UnorderedList(bipolarList));
-            add(rpt, PageBreak());
-        else
-            add(rpt, Paragraph('No significant langloc bipolar channels found.'));
-        end
-    end
+    add_langloc_channel_summary(rpt, obj);
 
     % Close the PDF document   
     try
