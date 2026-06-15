@@ -63,7 +63,7 @@ roiSourceTask    = 'MITSWJNTask';
 
 % --- Re-run control ---
 forceRebuildCrunched = true;
-forceReprocess       = false;
+forceReprocess       = true;
 
 % --- UI control ---
 isPlotVisible        = false;
@@ -104,7 +104,8 @@ useLanglocReportV2    = true;  % v2: includes LangLoc Responsive Electrodes chap
 % CSV/table with accuracy + RT (seconds), or response + probe columns.
 % Leave empty ('') to skip. Row order must match neural trials (default),
 % or set behaviorAlignBy = 'session_trial' with session/trial columns.
-behaviorFile    = fullfile(workingDir, 'behavior', 'Subject01_MITSWJNTask.csv');   % e.g. fullfile(workingDir, 'behavior', 'Subject01_MITSWJNTask.csv')
+workingDir  = 'F:\seeg\luohong\analysisEV';
+behaviorFile    = fullfile(workingDir, 'behavior', 'Subject01_MITSWJNTask_behavior.csv');   % e.g. fullfile(workingDir, 'behavior', 'Subject01_MITSWJNTask.csv')
 behaviorAlignBy = 'order';  % 'order' | 'session_trial'
 
 % --- Paths (EDIT THESE) ---
@@ -122,7 +123,7 @@ params.taskType     = taskType;
 switch taskType
     case 'MITSWJNTask'
         allDataFiles = {
-            'F:\seeg\analysis\data\Subject11/DA01008R/data_block001_02.mat'
+            'F:\seeg\analysis\data\Subject01/DA0011IJ/data_block001_03.mat'
         };
     case 'WM'
         allDataFiles = {

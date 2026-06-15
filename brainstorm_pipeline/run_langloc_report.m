@@ -69,9 +69,9 @@ end
 reportObj.events_table = ensure_events_table(reportObj);
 
 if isfield(taskConfig, 'nWordPositions') && ~isempty(taskConfig.nWordPositions)
-    reportObj.report_numWords = taskConfig.nWordPositions;
+    reportObj.for_preproc.report_numWords = taskConfig.nWordPositions;
 elseif isfield(taskConfig, 'testWords') && ~isempty(taskConfig.testWords)
-    reportObj.report_numWords = numel(taskConfig.testWords);
+    reportObj.for_preproc.report_numWords = numel(taskConfig.testWords);
 end
 end
 

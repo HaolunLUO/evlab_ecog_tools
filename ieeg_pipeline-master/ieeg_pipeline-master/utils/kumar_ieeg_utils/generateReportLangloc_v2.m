@@ -1147,8 +1147,9 @@ end
 function numWords = infer_report_num_words(obj)
 % Word count for responsive-electrode / word-boundary analyses.
 
-if isprop(obj, 'report_numWords') && ~isempty(obj.report_numWords)
-    numWords = obj.report_numWords;
+if isstruct(obj.for_preproc) && isfield(obj.for_preproc, 'report_numWords') ...
+        && ~isempty(obj.for_preproc.report_numWords)
+    numWords = obj.for_preproc.report_numWords;
     return;
 end
 
