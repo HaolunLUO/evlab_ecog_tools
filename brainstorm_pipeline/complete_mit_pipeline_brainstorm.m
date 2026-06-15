@@ -20,6 +20,7 @@
 %      (other tasks)   Load ROI and apply to current task
 %   4) Generate timecourse + barplots + anatomy plots
 %   5) Save group-compatible result .mat file
+%   6) Sync obj from sn_obj (stats + z-scored HG) and optional langloc PDF report
 %
 % RECOMMENDED USAGE
 %   A) Run once with taskType='MITSWJNTask' -> defines and saves ROI
@@ -45,8 +46,10 @@
 %% ========================================================================
 
 clear; clc; close all;
-addpath(genpath('F:\seeg\luohong\analysisEV\v2_piepeline\evlab_ecog_tools\brainstorm_pipeline'))
-addpath(genpath('F:\seeg\luohong\analysisEV\v2_piepeline\evlab_ecog_tools\')) 
+repoRoot = fileparts(fileparts(mfilename('fullpath')));
+addpath(genpath(fullfile(repoRoot, 'brainstorm_pipeline')));
+addpath(genpath(repoRoot));
+addpath(genpath(fullfile(repoRoot, 'ieeg_pipeline-master', 'ieeg_pipeline-master', 'utils', 'kumar_ieeg_utils')));
 %% ========================================================================
 % USER SETTINGS
 %% ========================================================================
@@ -58,7 +61,7 @@ roiSourceTask    = 'MITSWJNTask';
 
 % --- Re-run control ---
 forceRebuildCrunched = false;
-forceReprocess       = true;
+forceReprocess       = false;
 
 % --- UI control ---
 isPlotVisible        = false;
@@ -89,13 +92,19 @@ wordwiseMinConsec    = 3;      % require this many (consecutive) significant wor
 doWordBoundaries     = false;  % test_s_vs_n_wordboundaries (slower; needs timePermCluster)
 wordBoundaryEpoch    = [-0.25 0.25];
 
+% --- Langloc PDF report (generateReportLangloc_v2 / generateReportLangloc) ---
+% Requires MATLAB Report Generator (mlreportgen). Runs for MITSWJNTask and
+% MITLangloc only; saves PDF to output/<taskType>/.
+generateLanglocReport = true;
+useLanglocReportV2    = true;   % false -> generateReportLangloc (v1)
+
 % --- Paths (EDIT THESE) ---
 workingDir  = 'F:\seeg\luohong\analysisEV';
 anatomyPath = fullfile(workingDir, 'anatomy\');
 
 % --- Subject/protocol ---
 params = struct();
-params.SubjectName  = 'Subject07';
+params.SubjectName  = 'Subject01';
 params.ProtocolName = 'analysis';
 params.outputPath   = workingDir;
 params.taskType     = taskType;
@@ -104,7 +113,7 @@ params.taskType     = taskType;
 switch taskType
     case 'MITSWJNTask'
         allDataFiles = {
-            'F:\seeg\analysis\data\Subject07/DA0011OQ/data_block001.mat'
+            'F:\seeg\analysis\data\Subject11/DA01008R/data_block001_02.mat'
         };
     case 'WM'
         allDataFiles = {
@@ -394,6 +403,10 @@ fprintf('Output directory: %s\n', sn_obj.langloc_save_path);
 % STEP 7.5: SIGNIFICANCE + BASELINE Z-SCORE
 %% ========================================================================
 fprintf('\n=== STEP 7.5: SIGNIFICANCE + BASELINE Z-SCORE ===\n');
+
+if isempty(sn_obj.stats) || ~isstruct(sn_obj.stats)
+    sn_obj.stats = struct();
+end
 
 % This is the ieeg_pipeline feature chain that feeds the language channel
 % selection, run on the analysis object:
@@ -711,7 +724,42 @@ end
 save(groupResultFile, 'groupResult', '-v7.3');
 fprintf('Saved group result: %s\n', groupResultFile);
 
-save(crunchedFile, 'sn_obj', '-append');
+
+%% ========================================================================
+% STEP 14.5: SYNC obj FROM sn_obj
+%% ========================================================================
+fprintf('\n=== STEP 14.5: SYNCING obj FROM sn_obj ===\n');
+
+obj = sync_obj_from_sn_obj(obj, sn_obj);
+
+if isstruct(obj.stats) && ~isempty(fieldnames(obj.stats))
+    fprintf('obj.stats fields: %s\n', strjoin(fieldnames(obj.stats), ', '));
+else
+    warning('obj.stats is still empty after sync — Step 7.5 may not have completed.');
+end
+
+save(crunchedFile, 'obj', 'sn_obj', '-v7.3');
+fprintf('Saved synced obj and sn_obj: %s\n', crunchedFile);
+
+
+%% ========================================================================
+% STEP 15: LANGLOC PDF REPORT
+%% ========================================================================
+if generateLanglocReport
+    fprintf('\n=== STEP 15: LANGLOC PDF REPORT ===\n');
+    try
+        run_langloc_report(obj, taskType, taskConfig, outputDir, ...
+            params.SubjectName, useLanglocReportV2);
+    catch ME
+        warning('Langloc report generation failed (non-fatal): %s', ME.message);
+        if contains(ME.message, 'mlreportgen') || contains(ME.identifier, 'MATLAB:UndefinedFunction')
+            fprintf(['  Tip: install MATLAB Report Generator, or set ' ...
+                'generateLanglocReport = false.\n']);
+        end
+    end
+else
+    fprintf('\n=== STEP 15: LANGLOC PDF REPORT (skipped) ===\n');
+end
 
 %% ========================================================================
 % DONE

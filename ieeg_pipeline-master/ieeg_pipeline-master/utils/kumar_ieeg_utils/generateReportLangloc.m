@@ -1,6 +1,6 @@
 function generateReportLangloc(obj, reportName)
     % Check if this is a langloc experiment, if not, return early
-    langlocExperiments = {'LangLocVisual', 'LangLoc', 'MITLangloc', 'LangLocAudio', 'LangLocAudio-2'};
+    langlocExperiments = {'LangLocVisual', 'LangLoc', 'MITLangloc', 'LangLocAudio', 'LangLocAudio-2','analysis'};
     
     if ~ismember(obj.experiment, langlocExperiments)
         fprintf('Skipping non-langloc experiment: %s\n', obj.experiment);
