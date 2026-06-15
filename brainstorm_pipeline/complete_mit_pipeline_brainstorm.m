@@ -15,12 +15,12 @@
 %
 % WORKFLOW
 %   1) Convert Brainstorm SEEG data -> MIT crunched .mat file
-%   2) Preprocess: highpass, notch, CAR/bipolar, high-gamma extraction
-%   3) (roiSourceTask) Run S vs N localization and save ROI
+%   2) (optional) Attach behavioral log -> obj.events_table
+%   3) Preprocess: highpass, notch, CAR/bipolar, high-gamma extraction
+%   4) (roiSourceTask) Run S vs N localization and save ROI
 %      (other tasks)   Load ROI and apply to current task
-%   4) Generate timecourse + barplots + anatomy plots
-%   5) Save group-compatible result .mat file
-%   6) Sync obj from sn_obj (stats + z-scored HG) and optional langloc PDF report
+%   5) Generate timecourse + barplots + anatomy plots
+%   6) Save group-compatible result .mat file; sync obj; optional langloc PDF
 %
 % RECOMMENDED USAGE
 %   A) Run once with taskType='MITSWJNTask' -> defines and saves ROI
@@ -62,7 +62,7 @@ useROIfromSource = false;
 roiSourceTask    = 'MITSWJNTask';
 
 % --- Re-run control ---
-forceRebuildCrunched = false;
+forceRebuildCrunched = true;
 forceReprocess       = false;
 
 % --- UI control ---
@@ -99,6 +99,13 @@ wordBoundaryEpoch    = [-0.25 0.25];
 % MITLangloc only; saves PDF to output/<taskType>/.
 generateLanglocReport = true;
 useLanglocReportV2    = true;  % v2: includes LangLoc Responsive Electrodes chapter
+
+% --- Behavioral log (optional; for PDF performance metrics) ---
+% CSV/table with accuracy + RT (seconds), or response + probe columns.
+% Leave empty ('') to skip. Row order must match neural trials (default),
+% or set behaviorAlignBy = 'session_trial' with session/trial columns.
+behaviorFile    = fullfile(workingDir, 'behavior', 'Subject01_MITSWJNTask.csv');   % e.g. fullfile(workingDir, 'behavior', 'Subject01_MITSWJNTask.csv')
+behaviorAlignBy = 'order';  % 'order' | 'session_trial'
 
 % --- Paths (EDIT THESE) ---
 workingDir  = 'F:\seeg\luohong\analysisEV';
@@ -278,11 +285,39 @@ fprintf('Using crunched file: %s\n', crunchedFile);
 
 
 %% ========================================================================
+% STEP 2.5: ATTACH BEHAVIORAL LOG
+%% ========================================================================
+fprintf('\n=== STEP 2.5: BEHAVIORAL DATA ===\n');
+
+load(crunchedFile, 'obj');
+
+if ~isempty(behaviorFile)
+    if ~isfile(behaviorFile)
+        error('behaviorFile not found:\n  %s', behaviorFile);
+    end
+    fprintf('Loading behavior: %s\n', behaviorFile);
+    obj = attach_behavior_to_obj(obj, behaviorFile, 'alignBy', behaviorAlignBy);
+    save(crunchedFile, 'obj', '-v7.3');
+else
+    if isprop(obj, 'events_table') && istable(obj.events_table) ...
+            && height(obj.events_table) == numel(obj.condition)
+        fprintf('No behaviorFile set; using existing obj.events_table (%d trials).\n', ...
+            height(obj.events_table));
+    else
+        fprintf('No behaviorFile set; obj.events_table not populated (report will use defaults).\n');
+    end
+end
+
+
+%% ========================================================================
 % STEP 3: FIX CHANNEL TYPES + CLEAN CHANNELS
 %% ========================================================================
 fprintf('\n=== STEP 3: FIXING CHANNEL TYPES ===\n');
 
-load(crunchedFile, 'obj');
+% obj already loaded in Step 2.5 (or load if Step 2.5 was skipped in a prior edit)
+if ~exist('obj', 'var') || ~isa(obj, 'ecog_data_seeg')
+    load(crunchedFile, 'obj');
+end
 
 for i = 1:numel(obj.elec_ch_type)
     obj.elec_ch_type{i} = lower(obj.elec_ch_type{i});
