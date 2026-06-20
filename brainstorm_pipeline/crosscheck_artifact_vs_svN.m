@@ -19,11 +19,11 @@
 %           plot_crosscheck_channels
 
 %% USER SETTINGS — edit paths before running
-subject    = 'Subject07';
+subject    = 'Subject06';
 taskType   = 'MITSWJNTask';
-workingDir = 'F:\seeg\analysis\output\Subject07';
+workingDir = 'F:\seeg\luohong\analysisEV\';
 
-montage = 'both';              % 'unipolar', 'bipolar', or 'both'
+montage = 'bipolar';              % 'unipolar', 'bipolar', or 'both'
 runDetectionIfMissing = true;  % call detect_sharp_artifacts if stats absent
 min_amplitude = 15;            % z-score threshold for detection
 min_slope     = 10;            % z-score/sample slope threshold

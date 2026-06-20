@@ -892,8 +892,26 @@ methods
             cond_data = obj.trial_data;
         end
 
+        if isempty(cond_data)
+            error(['No trials found for condition "%s". Available conditions: %s'], ...
+                condition_flag, strjoin(unique(obj.condition), ', '));
+        end
+
         cond_data_ave = obj.get_average(cond_data);
         word_data = obj.get_value(cond_data_ave,'key','word','type','contain');
+
+        if isempty(word_data) || all(cellfun(@(x) isempty(x) || (istable(x) && height(x)==0), word_data))
+            sampleKeys = {};
+            if ~isempty(obj.trial_timing) && istable(obj.trial_timing{1})
+                sampleKeys = obj.trial_timing{1}.key;
+            end
+            error(['No word events found for condition "%s" (%d trials matched). ', ...
+                'trial_timing keys (trial 1): %s. ', ...
+                'Expected keys containing ''word'' (e.g. word_1). ', ...
+                'Available conditions: %s.'], ...
+                condition_flag, numel(cond_data), strjoin(sampleKeys, ', '), ...
+                strjoin(unique(obj.condition), ', '));
+        end
 
         B = obj.combine_trial_cond(word_data);
         [keys,strings,values] = obj.get_columns(B); %#ok<ASGLU>

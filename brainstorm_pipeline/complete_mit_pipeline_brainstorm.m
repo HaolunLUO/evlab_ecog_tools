@@ -84,7 +84,7 @@ detectSharpArtifacts = true;                    % optional sharp-transient QC af
 % trials are reserved for plotting and held-out effect sizes (avoids
 % double-dipping). Applies to test_s_vs_n, lang_resp_plots, and the effect
 % size / word-level analyses below.
-useOddForInference   = true;
+useOddForInference   = false;
 % Held-out effect sizes (computed on even trials):
 computeEffectSizes   = true;   % compute_hg_power_diff_s_vs_n + compute_hg_sn_corr
 % Word-level selection (per-word permutation + consecutiveness criterion):
@@ -105,7 +105,7 @@ useLanglocReportV2    = true;  % v2: includes LangLoc Responsive Electrodes chap
 % Leave empty ('') to skip. Row order must match neural trials (default),
 % or set behaviorAlignBy = 'session_trial' with session/trial columns.
 workingDir  = 'F:\seeg\luohong\analysisEV';
-behaviorFile    = fullfile(workingDir, 'behavior', 'Subject03_MITSWJNTask_behavior.csv');   % e.g. fullfile(workingDir, 'behavior', 'Subject01_MITSWJNTask.csv')
+behaviorFile    = fullfile(workingDir, 'behavior', 'Subject08_MITSWJNTask_behavior.csv');   % e.g. fullfile(workingDir, 'behavior', 'Subject01_MITSWJNTask.csv')
 behaviorAlignBy = 'order';  % 'order' | 'session_trial'
 
 % --- Paths (EDIT THESE) ---
@@ -114,7 +114,7 @@ anatomyPath = fullfile(workingDir, 'anatomy\');
 
 % --- Subject/protocol ---
 params = struct();
-params.SubjectName  = 'Subject03';
+params.SubjectName  = 'Subject08';
 params.ProtocolName = 'analysis';
 params.outputPath   = workingDir;
 params.taskType     = taskType;
