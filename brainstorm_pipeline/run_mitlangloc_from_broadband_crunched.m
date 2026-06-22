@@ -39,7 +39,7 @@ addpath(genpath(fullfile(repoRoot, 'ieeg_pipeline-master', 'ieeg_pipeline-master
 taskType = 'MITLangloc';
 
 % Full path to broadband-referenced crunched file from the other lab:
-broadbandCrunchedFile = 'F:\iEEG_evlab\BJH011_MITLangloc_crunched_defaultSEEGorBOTHBroadBand.mat';  % e.g. 'F:\...\AMC092_MITLangloc_crunched_defaultSEEGorBOTHBroadBand.mat'
+broadbandCrunchedFile = 'F:\iEEG_evlab\AMC088_MITLangloc_crunched_defaultSEEGorBOTHBroadBand.mat';  % e.g. 'F:\...\AMC092_MITLangloc_crunched_defaultSEEGorBOTHBroadBand.mat'
 
 workingDir  = 'F:\seeg\luohong\analysisEV';
 anatomyPath = fullfile(workingDir, 'anatomy\');
@@ -211,6 +211,7 @@ sn_obj = ecog_sn_data_seeg(...
     'ecog_data_seeg.m', ...
     workingDir);
 sn_obj.anatomy = obj.anatomy;
+sn_obj = enrich_sn_obj_from_obj(sn_obj, obj);
 
 if ~exist(sn_obj.langloc_save_path, 'dir')
     mkdir(sn_obj.langloc_save_path);
@@ -316,8 +317,19 @@ catch ME
 end
 
 roiUni = find(sn_obj.s_vs_n_sig.elec_data{1});
+sigBip = 0;
+if ismember('bip_elec_data', sn_obj.s_vs_n_sig.Properties.VariableNames)
+    sigBip = sum(logical(sn_obj.s_vs_n_sig.bip_elec_data{1, 1}));
+end
 fprintf('Significant unipolar channels: %d (%.1f%% of clean)\n', ...
     numel(roiUni), 100*numel(roiUni)/numel(sn_obj.elec_ch_clean));
+fprintf('Significant bipolar channels (test_s_vs_n): %d\n', sigBip);
+if doWordwiseLangloc && isprop(sn_obj, 'langloc_wordwise') ...
+        && ~isempty(sn_obj.langloc_wordwise) ...
+        && isfield(sn_obj.langloc_wordwise.results, 'bipolar')
+    fprintf('Significant bipolar channels (wordwise): %d\n', ...
+        sum(sn_obj.langloc_wordwise.results.bipolar.is_sig));
+end
 
 %% ========================================================================
 % STEP 9: SAVE RESULTS
@@ -334,6 +346,16 @@ groupResult.p_ratio_uni = sn_obj.s_vs_n_p_ratio.elec_data{1};
 groupResult.elec_labels = sn_obj.elec_ch_label;
 groupResult.nClean      = numel(sn_obj.elec_ch_clean);
 groupResult.nSig        = sum(groupResult.sig_uni);
+if ~isempty(sn_obj.bip_elec_data) && ismember('bip_elec_data', sn_obj.s_vs_n_sig.Properties.VariableNames)
+    groupResult.sig_bip     = logical(sn_obj.s_vs_n_sig.bip_elec_data{1, 1});
+    groupResult.p_ratio_bip = sn_obj.s_vs_n_p_ratio.bip_elec_data{1, 1};
+    groupResult.bip_labels  = sn_obj.bip_ch_label;
+    groupResult.nSigBip     = sum(groupResult.sig_bip);
+else
+    groupResult.sig_bip  = [];
+    groupResult.bip_labels = {};
+    groupResult.nSigBip  = 0;
+end
 groupResult.sample_freq = sn_obj.sample_freq;
 groupResult.nWords      = numel(taskConfig.testWords);
 save(groupResultFile, 'groupResult', '-v7.3');

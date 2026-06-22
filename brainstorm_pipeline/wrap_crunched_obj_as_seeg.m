@@ -39,9 +39,17 @@ skipProps = {'for_preproc', 'subject', 'experiment', ...
 props = properties(src);
 for i = 1:numel(props)
     pname = props{i};
-    if ismember(pname, skipProps) || ~isprop(obj, pname)
+    if ismember(pname, skipProps)
         continue;
     end
-    obj.(pname) = src.(pname);
+    try
+        if isprop(obj, pname)
+            obj.(pname) = src.(pname);
+        else
+            obj.addprop(pname);
+            obj.(pname) = src.(pname);
+        end
+    catch
+    end
 end
 end
