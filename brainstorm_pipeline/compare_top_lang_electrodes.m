@@ -64,7 +64,7 @@ otherSubjects = subjects_to_cellstr(otherSubjects);
 if ~exist(outputDir, 'dir'); mkdir(outputDir); end
 
 fprintf('\n=== TOP-%d%% LANG ELECTRODE COMPARISON ===\n', round(topPct * 100));
-fprintf('Ranking: S-vs-N correlation + split-half reliability\n');
+fprintf('Ranking: held-out S-vs-N correlation + split-half reliability\n');
 fprintf('Local task:  %s (n=%d subjects)\n', localTaskType, numel(localSubjects));
 fprintf('Other task:  %s (n=%d subjects)\n', otherTaskType, numel(otherSubjects));
 fprintf('Top pct:     %.0f%%\n', topPct * 100);

@@ -202,7 +202,7 @@ if isprop(sn_obj, 'trial_timing') && ~isempty(sn_obj.trial_timing)
     for i = 1:numel(sn_obj.trial_timing)
         tt = sn_obj.trial_timing{i};
         if istable(tt) && ismember('end', tt.Properties.VariableNames)
-            maxW = max(maxW, height(tt));
+            maxW = max(maxW, trial_timing_max_word_index(tt));
         elseif isstruct(tt) && isfield(tt, 'end')
             maxW = max(maxW, numel(tt.end));
         end

@@ -941,10 +941,11 @@ methods
     %   - 'key'       : string key into trial_timing.key (e.g. 'word_1'). When
     %                   given (non-empty), the epoch is anchored to that row.
     %   - 'probe_key' : numeric row index into the per-trial timing table,
-    %                   used when 'key' is empty. Default 1 (first event).
+    %                   used when 'key' is empty. Default 1 (fixation when the
+    %                   MGH-style fix row is present, otherwise first event).
     % The engine methods (extract_significant_channel, extract_time_significance,
-    % extract_normalization_metrics) call this with only 'epoch_tw', so they fall
-    % back to probe_key = 1.
+    % extract_normalization_metrics) call this with only 'epoch_tw', so they use
+    % probe_key = 1 for the baseline window [-0.5 0].
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     function [trial_data_epoch, trial_bip_data_epoch] = extract_trial_epochs(obj, varargin)
         p = inputParser();

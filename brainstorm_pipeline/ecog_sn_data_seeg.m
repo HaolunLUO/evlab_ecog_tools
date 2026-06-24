@@ -417,7 +417,8 @@ methods
             valid = obj.bip_ch_valid;
         end
     
-        starts_n_stops = cellfun(@(x) [x.start(1), x.end(length(ops.words))],obj.trial_timing,'UniformOutput',false);
+        starts_n_stops = cellfun(@(x) trial_timing_word_sample_span(x, ops.words), ...
+            obj.trial_timing, 'UniformOutput', false);
     
         if ops.useLangElecs && ~ops.allElecs
             values = cellfun(@(x) data(sig_elecs,x(1):x(2)),starts_n_stops,'UniformOutput',false); 
@@ -648,8 +649,12 @@ methods
         end
         num_runs_total = {length(obj.stitch_index)};
         num_words = sum(cell2mat(cellfun(@(x) contains(x,'word'),obj.trial_timing{keep_trials(1),1}.key,'UniformOutput',false)));
-        presentation_rate = {(obj.trial_timing{keep_trials(1),1}.end(1) - ...
-                            obj.trial_timing{keep_trials(1),1}.start(1)+1) / obj.sample_freq};
+        tt0 = obj.trial_timing{keep_trials(1),1};
+        w1Row = find(strcmp(tt0.key, 'word_1'), 1);
+        if isempty(w1Row)
+            w1Row = 1;
+        end
+        presentation_rate = {(tt0.end(w1Row) - tt0.start(w1Row) + 1) / obj.sample_freq};
 
         % Flexible condition counting (works with any condition name mapping)
         S_flag = obj.s_vs_n_ops.S_condition_flag;
@@ -1289,11 +1294,8 @@ methods
         % an epoch around each word position. Requires timePermCluster.m on
         % the path (provided in kumar_ieeg_utils/).
         %
-        % NOTE (brainstorm adaptation): the brainstorm trial_timing tables
-        % store one row per word with row 1 == first word onset, so word
-        % position wordPos maps directly to probe_key = wordPos (the MGH
-        % @ecog_sn_data original used wordPos+1 because its tables had a
-        % leading fixation row).
+        % NOTE: trial_timing row 1 is fixation (key = fix); word position N
+        % maps to key word_N (MGH / ieeg_pipeline convention).
         p = inputParser();
         addParameter(p, 'S_condition_flag', 'sentence');
         addParameter(p, 'N_condition_flag', 'nonword');
@@ -1337,9 +1339,8 @@ methods
         for wordPos = 1:ops.num_words
             fprintf(1, '  Processing word position %d/%d...\n', wordPos, ops.num_words);
 
-            % brainstorm: word position maps directly to probe_key
             [epochData, epochData_bip] = obj.extract_trial_epochs('epoch_tw', ops.epoch_range, ...
-                                                                  'probe_key', wordPos);
+                                                                  'key', sprintf('word_%d', wordPos));
 
             sentence_trials_idx = strcmp(obj.condition, ops.S_condition_flag) & keep_trials;
             nonword_trials_idx = strcmp(obj.condition, ops.N_condition_flag) & keep_trials;

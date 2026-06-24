@@ -9,8 +9,9 @@ function ranking = compute_lang_elec_ranking(sn_obj, varargin)
 %     - heldout_corr: held-out S-vs-N rho on even trials (hg_sn_corr if present)
 %     - split_half_reliab: split-half reliability of per-trial mean HG
 %
-%   Composite score = mean of within-subject z-scores of s_vs_n_corr and
-%   split_half_reliab (higher = stronger / more reliable language response).
+%   Composite score = mean of within-subject z-scores of heldout_corr and
+%   split_half_reliab (higher = stronger held-out effect + stable response).
+%   Falls back to s_vs_n_corr when heldout_corr is unavailable.
 %
 %   Name-Value:
 %     signalType   - 'bipolar' (default) | 'unipolar'
@@ -100,10 +101,18 @@ end
 
 reliabVec = compute_split_half_reliability(sn_obj, ops, dataField, nChan);
 
-zCorr = zscore_within(sigIdx, corrVec);
+effectVec = heldoutVec;
+if sum(isfinite(effectVec(sigIdx))) < 2
+    warning('compute_lang_elec_ranking:NoHeldout', ...
+        'heldout_corr unavailable for %s; using s_vs_n_corr for composite ranking.', ...
+        get_subject_id(sn_obj));
+    effectVec = corrVec;
+end
+
+zEffect = zscore_within(sigIdx, effectVec);
 zRel = zscore_within(sigIdx, reliabVec);
 composite = nan(nChan, 1);
-composite(sigIdx) = (zCorr(sigIdx) + zRel(sigIdx)) / 2;
+composite(sigIdx) = (zEffect(sigIdx) + zRel(sigIdx)) / 2;
 
 [~, sortOrder] = sort(composite(sigIdx), 'descend', 'MissingPlacement', 'last');
 rankAmongSig = nan(nChan, 1);
@@ -285,7 +294,7 @@ if isprop(sn_obj, 'trial_timing') && ~isempty(sn_obj.trial_timing)
     for i = 1:numel(sn_obj.trial_timing)
         tt = sn_obj.trial_timing{i};
         if istable(tt) && ismember('end', tt.Properties.VariableNames)
-            maxW = max(maxW, height(tt));
+            maxW = max(maxW, trial_timing_max_word_index(tt));
         elseif isstruct(tt) && isfield(tt, 'end')
             maxW = max(maxW, numel(tt.end));
         end

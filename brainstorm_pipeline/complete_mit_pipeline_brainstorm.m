@@ -114,7 +114,7 @@ anatomyPath = fullfile(workingDir, 'anatomy\');
 
 % --- Subject/protocol ---
 params = struct();
-params.SubjectName  = 'Subject08';
+params.SubjectName  = 'Subject04';
 params.ProtocolName = 'analysis';
 params.outputPath   = workingDir;
 params.taskType     = taskType;
@@ -175,6 +175,8 @@ switch taskType
         taskConfig.J_condition = 'JABBERWOCKY';
         taskConfig.testWords   = 1:8;
         taskConfig.subAverage  = false;
+        taskConfig.addFixationRow = true;
+        taskConfig.fixationDuration = 0.5;
 
     case 'Auditory'
         taskConfig = struct();
@@ -291,6 +293,18 @@ fprintf('Using crunched file: %s\n', crunchedFile);
 fprintf('\n=== STEP 2.5: BEHAVIORAL DATA ===\n');
 
 load(crunchedFile, 'obj');
+
+if strcmpi(taskType, 'MITSWJNTask')
+    fixDur = 0.5;
+    if isfield(taskConfig, 'fixationDuration') && ~isempty(taskConfig.fixationDuration)
+        fixDur = taskConfig.fixationDuration;
+    end
+    [obj, timingPatched] = ensure_fixation_in_obj_trial_timing(obj, fixDur);
+    if timingPatched
+        save(crunchedFile, 'obj', '-v7.3');
+        fprintf('Updated crunched file with fixation rows: %s\n', crunchedFile);
+    end
+end
 
 if ~isempty(behaviorFile)
     if ~isfile(behaviorFile)
@@ -449,13 +463,15 @@ end
 % This is the ieeg_pipeline feature chain that feeds the language channel
 % selection, run on the analysis object:
 %   extract_significant_channel -> extract_time_significance
-%   -> extract_normalization_metrics -> normalize_signal('z-score')
+%   -> 
+
+
+%-> normalize_signal('z-score')
 %
 % The significance steps run on the (un-normalized) high-gamma envelope and
 % store their results in sn_obj.stats. The baseline for both significance and
-% normalization is anchored to the first event of each trial (probe_key = 1),
-% which for the brainstorm trial_timing tables is the first word onset; the
-% default baseTimeRange [-0.5 0] therefore captures the pre-word fixation.
+% normalization is anchored to probe_key = 1 (fixation row when present, else
+% first event); default baseTimeRange [-0.5 0] is the pre-fixation baseline.
 sn_obj.extract_significant_channel();
 sn_obj.extract_time_significance();
 sn_obj.extract_normalization_metrics();

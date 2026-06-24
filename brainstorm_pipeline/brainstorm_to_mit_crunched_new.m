@@ -230,7 +230,12 @@ function [trialTiming, conditions] = extract_trials_from_bst(DataMat, params, of
             
             timingTable = table(keys, strings, starts, ends, ...
                 'VariableNames', {'key', 'string', 'start', 'end'});
-            
+
+            if should_add_fixation_row(params)
+                fixDur = fixation_duration_sec(params);
+                timingTable = prepend_fixation_row(timingTable, fixDur, sRate);
+            end
+
             trialTiming{end+1, 1} = timingTable;
             conditions{end+1, 1} = condName;
         end
@@ -281,4 +286,21 @@ function [condName, wordPos] = parseEventLabel(label, pattern, maxWords)
     if ~isnan(wordPos) && (wordPos < 1 || wordPos > maxWords)
         wordPos = NaN;
     end
+end
+
+
+function tf = should_add_fixation_row(params)
+tf = false;
+if isfield(params, 'taskConfig') && isfield(params.taskConfig, 'addFixationRow')
+    tf = logical(params.taskConfig.addFixationRow);
+end
+end
+
+
+function dur = fixation_duration_sec(params)
+dur = 0.5;
+if isfield(params, 'taskConfig') && isfield(params.taskConfig, 'fixationDuration') ...
+        && ~isempty(params.taskConfig.fixationDuration)
+    dur = params.taskConfig.fixationDuration;
+end
 end
