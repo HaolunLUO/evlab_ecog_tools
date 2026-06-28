@@ -249,16 +249,6 @@ if strcmpi(taskType, 'MITSWJNTask')
 
     load(crunchedFile, 'obj');
 
-    fixDur = 0.5;
-    if isfield(taskConfig, 'fixationDuration') && ~isempty(taskConfig.fixationDuration)
-        fixDur = taskConfig.fixationDuration;
-    end
-    [obj, timingPatched] = ensure_fixation_in_obj_trial_timing(obj, fixDur);
-    if timingPatched
-        save(crunchedFile, 'obj', '-v7.3');
-        fprintf('Updated crunched file with fixation rows: %s\n', crunchedFile);
-    end
-
     if ~isempty(behaviorFile)
         if ~isfile(behaviorFile)
             error('behaviorFile not found:\n  %s', behaviorFile);
