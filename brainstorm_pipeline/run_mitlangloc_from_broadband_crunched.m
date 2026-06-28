@@ -9,9 +9,10 @@
 %
 %   This script:
 %     1) Loads the broadband crunched .mat (variable: obj)
-%     2) Extracts high-gamma (NAPLAB), downsamples
-%     3) Baseline z-scores the HG envelope
-%     4) Runs MITLangloc S-vs-N localization, plots, and group results
+%     2) Optionally re-runs broadband preprocessing (forceReprocess)
+%     3) Extracts high-gamma (NAPLAB), downsamples
+%     4) Baseline z-scores the HG envelope
+%     5) Runs MITLangloc S-vs-N localization, plots, and group results
 %
 %   Does NOT modify complete_mit_pipeline_brainstorm.m.
 %
@@ -39,7 +40,7 @@ addpath(genpath(fullfile(repoRoot, 'ieeg_pipeline-master', 'ieeg_pipeline-master
 taskType = 'MITLangloc';
 
 % Full path to broadband-referenced crunched file from the other lab:
-broadbandCrunchedFile = 'F:\iEEG_evlab\AMC088_MITLangloc_crunched_defaultSEEGorBOTHBroadBand.mat';  % e.g. 'F:\...\AMC092_MITLangloc_crunched_defaultSEEGorBOTHBroadBand.mat'
+broadbandCrunchedFile = 'F:\iEEG_evlab\AMC091_MITLangloc_crunched_defaultSEEGorBOTHBroadBand.mat';  % e.g. 'F:\...\AMC092_MITLangloc_crunched_defaultSEEGorBOTHBroadBand.mat'
 
 workingDir  = 'F:\seeg\luohong\analysisEV';
 anatomyPath = fullfile(workingDir, 'anatomy\');
@@ -48,8 +49,15 @@ anatomyPath = fullfile(workingDir, 'anatomy\');
 saveProcessedCopy = true;
 processedCopyDir    = fullfile(workingDir, 'crunched', 'MITLangloc');
 
-% Re-run HG extraction even if sample_freq already equals decimationFreq:
-forceReprocessHG = false;
+% Re-run control (see STEP 3):
+%   forceReprocess    — re-run broadband preprocess_signal from raw, then HG + downsample
+%   forceReprocessHG  — re-run HG + downsample only (broadband must already be present)
+forceReprocess       = true;
+forceReprocessHG     = false;
+
+preprocOrder           = 'defaultSEEGorBOTHBroadBand';
+isPlotVisible          = false;
+doneVisualInspection   = true;
 
 decimationFreq = 200;
 detectSharpArtifacts = true;
@@ -62,14 +70,14 @@ N_condition = 'Jabberwocky';
 % --- Language channel selection / statistics ---
 useOddForInference = false;
 computeEffectSizes = true;
-doWordwiseLangloc  = true;
+doWordwiseLangloc  = false;
 wordwiseMinConsec  = 3;
 doWordBoundaries   = false;
 wordBoundaryEpoch  = [-0.25 0.25];
 
 % --- Optional PDF report (needs MATLAB Report Generator) ---
-generateLanglocReport = true;
-useLanglocReportV2    = true;
+generateLanglocReport = false;
+useLanglocReportV2    = false;
 
 % --- Optional behavioral log ---
 behaviorFile    = '';
@@ -90,7 +98,7 @@ taskConfig.N_condition = N_condition;
 taskConfig.W_condition = 'Word-lists';
 taskConfig.J_condition = 'Jabberwocky';
 taskConfig.testWords   = 1:12;
-taskConfig.subAverage  = true;
+taskConfig.subAverage  = false;
 
 %% ========================================================================
 % SETUP
@@ -157,16 +165,32 @@ else
 end
 
 %% ========================================================================
-% STEP 3: HIGH-GAMMA + DOWNSAMPLE  (skip broadband)
+% STEP 3: PREPROCESS (optional broadband) + HIGH-GAMMA + DOWNSAMPLE
 %% ========================================================================
-fprintf('\n=== STEP 3: HIGH-GAMMA + DOWNSAMPLE ===\n');
+fprintf('\n=== STEP 3: PREPROCESS + HIGH-GAMMA + DOWNSAMPLE ===\n');
 
-needHGExtraction = forceReprocessHG || obj.sample_freq > decimationFreq;
+hasBroadbandPreproc = isfield(obj, 'for_preproc') ...
+    && isfield(obj.for_preproc, 'order') ...
+    && ~isempty(obj.for_preproc.order);
+needBroadbandPreproc = forceReprocess || ~hasBroadbandPreproc;
+
+if needBroadbandPreproc
+    fprintf('Broadband preprocessing (order: %s) ...\n', preprocOrder);
+    obj.preprocess_signal('order', preprocOrder, ...
+        'isPlotVisible', isPlotVisible, ...
+        'doneVisualInspection', doneVisualInspection);
+    obj.trial_data = [];
+else
+    fprintf('Broadband preprocessing already present; skipping.\n');
+end
+
+needHGExtraction = forceReprocess || forceReprocessHG || obj.sample_freq > decimationFreq;
 
 if needHGExtraction
     fprintf('Extracting high-gamma (NAPLAB) and downsampling to %d Hz ...\n', decimationFreq);
     obj.extract_high_gamma('doNapLabFilterExtraction', true);
     obj.downsample_signal('decimationFreq', decimationFreq);
+    obj.trial_data = [];
 else
     fprintf('High-gamma + downsampling already done (Fs=%.1f Hz); skipping.\n', obj.sample_freq);
 end

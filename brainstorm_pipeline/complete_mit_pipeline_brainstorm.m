@@ -20,7 +20,7 @@
 %   4) (roiSourceTask) Run S vs N localization and save ROI
 %      (other tasks)   Load ROI and apply to current task
 %   5) Generate timecourse + barplots + anatomy plots
-%   6) Save group-compatible result .mat file; sync obj; optional langloc PDF
+%   6) Save group-compatible result .mat files (groupResult + allChanGammaPower); sync obj; optional langloc PDF
 %
 % RECOMMENDED USAGE
 %   A) Run once with taskType='MITSWJNTask' -> defines and saves ROI
@@ -55,7 +55,7 @@ addpath(genpath(fullfile(repoRoot, 'ieeg_pipeline-master', 'ieeg_pipeline-master
 %% ========================================================================
 % USER SETTINGS
 %% ========================================================================
-taskType = 'MITSWJNTask';  % 'MITSWJNTask' | 'WM' | 'Auditory' | 'MITLangloc'
+taskType = 'MITSWJNTask';  % 'MITSWJNTask' | 'WM' | 'vWM' | 'Math' | 'MSIT' | 'vMSIT' | 'Auditory' | 'MITLangloc'
 
 % --- Cross-task ROI ---
 useROIfromSource = false;
@@ -94,18 +94,17 @@ wordwiseMinConsec    = 3;      % require this many (consecutive) significant wor
 doWordBoundaries     = false;  % test_s_vs_n_wordboundaries (slower; needs timePermCluster)
 wordBoundaryEpoch    = [-0.25 0.25];
 
-% --- Langloc PDF report (generateReportLangloc_v2 / generateReportLangloc) ---
-% Requires MATLAB Report Generator (mlreportgen). Runs for MITSWJNTask and
-% MITLangloc only; saves PDF to output/<taskType>/.
+% --- Langloc PDF report (MITSWJNTask only) ---
+% Requires MATLAB Report Generator (mlreportgen). Saves PDF to output/MITSWJNTask/.
 generateLanglocReport = true;
 useLanglocReportV2    = true;  % v2: includes LangLoc Responsive Electrodes chapter
 
-% --- Behavioral log (optional; for PDF performance metrics) ---
+% --- Behavioral log (MITSWJNTask only; for PDF performance metrics) ---
 % CSV/table with accuracy + RT (seconds), or response + probe columns.
 % Leave empty ('') to skip. Row order must match neural trials (default),
 % or set behaviorAlignBy = 'session_trial' with session/trial columns.
 workingDir  = 'F:\seeg\luohong\analysisEV';
-behaviorFile    = fullfile(workingDir, 'behavior', 'Subject08_MITSWJNTask_behavior.csv');   % e.g. fullfile(workingDir, 'behavior', 'Subject01_MITSWJNTask.csv')
+behaviorFile    = fullfile(workingDir, 'behavior', 'Subject12_MITSWJNTask_behavior.csv');   % e.g. fullfile(workingDir, 'behavior', 'Subject01_MITSWJNTask.csv')
 behaviorAlignBy = 'order';  % 'order' | 'session_trial'
 
 % --- Paths (EDIT THESE) ---
@@ -114,7 +113,7 @@ anatomyPath = fullfile(workingDir, 'anatomy\');
 
 % --- Subject/protocol ---
 params = struct();
-params.SubjectName  = 'Subject04';
+params.SubjectName  = 'Subject12';
 params.ProtocolName = 'analysis';
 params.outputPath   = workingDir;
 params.taskType     = taskType;
@@ -123,11 +122,27 @@ params.taskType     = taskType;
 switch taskType
     case 'MITSWJNTask'
         allDataFiles = {
-            'F:\seeg\analysis\data\Subject01/DA0011IJ/data_block001_03.mat'
+            'F:\seeg\analysis\data\Subject12/DA0011XQ/data_block001.mat'
         };
     case 'WM'
         allDataFiles = {
-            'F:\seeg\analysis\data\Subject01\DA0011IJ\data_block001_07.mat'
+            'F:\seeg\analysis\data\Subject12/DA0011X8/data_block001.mat'
+        };
+    case 'vWM'
+        allDataFiles = {
+            'F:\seeg\analysis\data\Subject12/DA0011XQ/data_block001_05.mat'  % EDIT: vWM task data
+        };
+    case 'Math'
+        allDataFiles = {
+            'F:\seeg\analysis\data\Subject12/DA0011XQ/data_block001_02.mat'  % EDIT: Math task data
+        };
+    case 'MSIT'
+        allDataFiles = {
+            'F:\seeg\analysis\data\Subject12/DA0011XQ/data_block001_04.mat'  % EDIT: MSIT task data
+        };
+    case 'vMSIT'
+        allDataFiles = {
+            'F:\seeg\analysis\data\Subject12/DA0011XQ/data_block001_03.mat'  % EDIT: vMSIT task data
         };
     case 'Auditory'
         allDataFiles = {
@@ -145,68 +160,7 @@ end
 %% ========================================================================
 % STEP 0: TASK CONFIGURATION
 %% ========================================================================
-switch taskType
-    case 'MITLangloc'
-        taskConfig = struct();
-        taskConfig.nWordPositions = 12;
-        taskConfig.wordDuration   = 0.45;
-        taskConfig.eventPattern   = '%s_tp%d';
-        taskConfig.conditionMap = containers.Map(...
-            {'sentence', 'word lists', 'Jabberwocky', 'non-word lists'}, ...
-            {'Sentences', 'Word-lists', 'Jabberwocky', 'Nonword-lists'});
-        taskConfig.S_condition = 'Sentences';
-        taskConfig.N_condition = 'Nonword-lists';
-        taskConfig.W_condition = 'Word-lists';
-        taskConfig.J_condition = 'Jabberwocky';
-        taskConfig.testWords   = 1:12;
-        taskConfig.subAverage  = true;
-
-    case 'MITSWJNTask'
-        taskConfig = struct();
-        taskConfig.nWordPositions = 8;
-        taskConfig.wordDuration   = 0.70;
-        taskConfig.eventPattern   = '%s_tp%d';
-        taskConfig.conditionMap = containers.Map(...
-            {'sentence', 'word lists', 'Jabberwocky', 'non-word lists'}, ...
-            {'SENTENCES', 'WORDS', 'JABBERWOCKY', 'NONWORDS'});
-        taskConfig.S_condition = 'SENTENCES';
-        taskConfig.N_condition = 'NONWORDS';
-        taskConfig.W_condition = 'WORDS';
-        taskConfig.J_condition = 'JABBERWOCKY';
-        taskConfig.testWords   = 1:8;
-        taskConfig.subAverage  = false;
-        taskConfig.addFixationRow = true;
-        taskConfig.fixationDuration = 0.5;
-
-    case 'Auditory'
-        taskConfig = struct();
-        taskConfig.nWordPositions = 1;
-        taskConfig.wordDuration   = 18;
-        taskConfig.eventPattern   = '%s';
-        taskConfig.conditionMap = containers.Map({'Intact', 'Degraded'}, {'Intact', 'Degraded'});
-        taskConfig.S_condition = 'Intact';
-        taskConfig.N_condition = 'Degraded';
-        taskConfig.W_condition = '';
-        taskConfig.J_condition = '';
-        taskConfig.testWords   = 1;
-        taskConfig.subAverage  = true;
-
-    case 'WM'
-        taskConfig = struct();
-        taskConfig.nWordPositions = 5;
-        taskConfig.wordDuration   = 1;
-        taskConfig.eventPattern   = '%s_tp%d';
-        taskConfig.conditionMap = containers.Map({'hard', 'easy'}, {'Hard', 'Easy'});
-        taskConfig.S_condition = 'Hard';
-        taskConfig.N_condition = 'Easy';
-        taskConfig.W_condition = '';
-        taskConfig.J_condition = '';
-        taskConfig.testWords   = 1:5;
-        taskConfig.subAverage  = true;
-
-    otherwise
-        error('Unknown task type: %s', taskType);
-end
+taskConfig = get_mit_task_config(taskType);
 
 params.nWordPositions = taskConfig.nWordPositions;
 params.wordDuration   = taskConfig.wordDuration;
@@ -288,13 +242,13 @@ fprintf('Using crunched file: %s\n', crunchedFile);
 
 
 %% ========================================================================
-% STEP 2.5: ATTACH BEHAVIORAL LOG
+% STEP 2.5: ATTACH BEHAVIORAL LOG (MITSWJNTask only)
 %% ========================================================================
-fprintf('\n=== STEP 2.5: BEHAVIORAL DATA ===\n');
-
-load(crunchedFile, 'obj');
-
 if strcmpi(taskType, 'MITSWJNTask')
+    fprintf('\n=== STEP 2.5: BEHAVIORAL DATA ===\n');
+
+    load(crunchedFile, 'obj');
+
     fixDur = 0.5;
     if isfield(taskConfig, 'fixationDuration') && ~isempty(taskConfig.fixationDuration)
         fixDur = taskConfig.fixationDuration;
@@ -304,23 +258,25 @@ if strcmpi(taskType, 'MITSWJNTask')
         save(crunchedFile, 'obj', '-v7.3');
         fprintf('Updated crunched file with fixation rows: %s\n', crunchedFile);
     end
-end
 
-if ~isempty(behaviorFile)
-    if ~isfile(behaviorFile)
-        error('behaviorFile not found:\n  %s', behaviorFile);
-    end
-    fprintf('Loading behavior: %s\n', behaviorFile);
-    obj = attach_behavior_to_obj(obj, behaviorFile, 'alignBy', behaviorAlignBy);
-    save(crunchedFile, 'obj', '-v7.3');
-else
-    if isprop(obj, 'events_table') && istable(obj.events_table) ...
-            && height(obj.events_table) == numel(obj.condition)
-        fprintf('No behaviorFile set; using existing obj.events_table (%d trials).\n', ...
-            height(obj.events_table));
+    if ~isempty(behaviorFile)
+        if ~isfile(behaviorFile)
+            error('behaviorFile not found:\n  %s', behaviorFile);
+        end
+        fprintf('Loading behavior: %s\n', behaviorFile);
+        obj = attach_behavior_to_obj(obj, behaviorFile, 'alignBy', behaviorAlignBy);
+        save(crunchedFile, 'obj', '-v7.3');
     else
-        fprintf('No behaviorFile set; obj.events_table not populated (report will use defaults).\n');
+        if isprop(obj, 'events_table') && istable(obj.events_table) ...
+                && height(obj.events_table) == numel(obj.condition)
+            fprintf('No behaviorFile set; using existing obj.events_table (%d trials).\n', ...
+                height(obj.events_table));
+        else
+            fprintf('No behaviorFile set; obj.events_table not populated (report will use defaults).\n');
+        end
     end
+else
+    fprintf('\n=== STEP 2.5: BEHAVIORAL DATA (skipped; MITSWJNTask only) ===\n');
 end
 
 
@@ -680,103 +636,20 @@ end
 
 
 %% ========================================================================
-% STEP 14: SAVE GROUP-COMPATIBLE RESULTS
+% STEP 14: SAVE GROUP-COMPATIBLE RESULTS (MIT_multi_single format)
 %% ========================================================================
 fprintf('\n=== STEP 14: SAVING GROUP RESULTS ===\n');
 
-groupResultFile = fullfile(outputDir, sprintf('%s_%s_groupResult.mat', params.SubjectName, taskType));
-
-groupResult = struct();
-groupResult.subject  = params.SubjectName;
-groupResult.taskType = taskType;
-
-groupResult.sig_uni     = logical(sn_obj.s_vs_n_sig.elec_data{1});
-groupResult.p_ratio_uni = sn_obj.s_vs_n_p_ratio.elec_data{1};
-groupResult.elec_labels = sn_obj.elec_ch_label;
-groupResult.elec_valid  = sn_obj.elec_ch_valid;
-groupResult.elec_clean  = sn_obj.elec_ch_clean;
-groupResult.nClean      = numel(sn_obj.elec_ch_clean);
-groupResult.nSig        = sum(groupResult.sig_uni);
-
-if ~isempty(sn_obj.bip_elec_data) && ismember('bip_elec_data', sn_obj.s_vs_n_sig.Properties.VariableNames)
-    groupResult.sig_bip     = logical(sn_obj.s_vs_n_sig.bip_elec_data{1});
-    groupResult.p_ratio_bip = sn_obj.s_vs_n_p_ratio.bip_elec_data{1};
-    groupResult.bip_labels  = sn_obj.bip_ch_label;
-    groupResult.nSigBip     = sum(groupResult.sig_bip);
-else
-    groupResult.sig_bip  = [];
-    groupResult.bip_labels = {};
-    groupResult.nSigBip  = 0;
-end
-
-if isfield(sn_obj, 'anatomy') && isfield(sn_obj.anatomy, 'mni_space') ...
-        && isfield(sn_obj.anatomy.mni_space, 'tala')
-    allMNI = sn_obj.anatomy.mni_space.tala.electrodes;
-    groupResult.mni_coords = allMNI;
-    sigIdx = find(groupResult.sig_uni);
-    mappedCells = sn_obj.anatomy.mapping(sigIdx);
-    ok = ~cellfun(@isempty, mappedCells);
-    sigAnatomyIdx = cell2mat(mappedCells(ok));
-    sigAnatomyIdx = sigAnatomyIdx(sigAnatomyIdx >= 1 & sigAnatomyIdx <= size(allMNI,1));
-    sigMask = false(size(allMNI,1), 1);
-    sigMask(sigAnatomyIdx) = true;
-    groupResult.mni_sig_mask = sigMask;
-end
-
-groupResult.sample_freq = sn_obj.sample_freq;
-groupResult.nWords      = numel(taskConfig.testWords);
-
-% --- Held-out effect sizes (even trials) ---
-if computeEffectSizes && ~isempty(sn_obj.hg_power_diff)
-    groupResult.hg_power_diff = sn_obj.hg_power_diff.results;
-end
-if computeEffectSizes && ~isempty(sn_obj.hg_sn_corr)
-    groupResult.hg_sn_corr = sn_obj.hg_sn_corr.results;
-end
-
-% --- Word-wise language selection ---
-if doWordwiseLangloc && ~isempty(sn_obj.langloc_wordwise)
-    groupResult.langloc_wordwise = sn_obj.langloc_wordwise.results;
-    if isfield(sn_obj.langloc_wordwise.results, 'unipolar')
-        groupResult.sig_wordwise_uni = sn_obj.langloc_wordwise.results.unipolar.is_sig;
-        groupResult.nSigWordwise     = sum(groupResult.sig_wordwise_uni);
-    end
-end
-
-% --- Word-boundaries time-series selection ---
-if doWordBoundaries && ~isempty(sn_obj.s_vs_n_wordboundaries_sigUnipolarChannels)
-    groupResult.sig_wordboundaries_uni = sn_obj.s_vs_n_wordboundaries_sigUnipolarChannels;
-end
-
-try
-    [S_tc, ~] = sn_obj.get_timecourses('words', taskConfig.testWords, 'condition', taskConfig.S_condition, 'signalType', 'unipolar');
-    [N_tc, ~] = sn_obj.get_timecourses('words', taskConfig.testWords, 'condition', taskConfig.N_condition, 'signalType', 'unipolar');
-    groupResult.S_timecourse_mean = mean(S_tc, 1);
-    groupResult.S_timecourse_sem  = std(S_tc, [], 1) / sqrt(size(S_tc,1));
-    groupResult.N_timecourse_mean = mean(N_tc, 1);
-    groupResult.N_timecourse_sem  = std(N_tc, [], 1) / sqrt(size(N_tc,1));
-    groupResult.nSigElecs_tc      = size(S_tc, 1);
-catch ME
-    warning('Monopolar timecourses failed: %s', ME.message);
-end
-
-if ~isempty(sn_obj.bip_elec_data) && ismember('bip_elec_data', sn_obj.s_vs_n_sig.Properties.VariableNames) ...
-        && sum(sn_obj.s_vs_n_sig.bip_elec_data{1}) > 0
-    try
-        [S_tc_bip, ~] = sn_obj.get_timecourses('words', taskConfig.testWords, 'condition', taskConfig.S_condition, 'signalType', 'bipolar');
-        [N_tc_bip, ~] = sn_obj.get_timecourses('words', taskConfig.testWords, 'condition', taskConfig.N_condition, 'signalType', 'bipolar');
-        groupResult.S_timecourse_mean_bip = mean(S_tc_bip, 1);
-        groupResult.S_timecourse_sem_bip  = std(S_tc_bip, [], 1) / sqrt(size(S_tc_bip,1));
-        groupResult.N_timecourse_mean_bip = mean(N_tc_bip, 1);
-        groupResult.N_timecourse_sem_bip  = std(N_tc_bip, [], 1) / sqrt(size(N_tc_bip,1));
-        groupResult.nSigElecs_tc_bip      = size(S_tc_bip, 1);
-    catch ME
-        warning('Bipolar timecourses failed: %s', ME.message);
-    end
-end
-
-save(groupResultFile, 'groupResult', '-v7.3');
-fprintf('Saved group result: %s\n', groupResultFile);
+saveOpts = struct();
+saveOpts.sourceFile            = crunchedFile;
+saveOpts.includeEffectSizes    = computeEffectSizes;
+saveOpts.includeWordwise       = doWordwiseLangloc;
+saveOpts.includeWordBoundaries = doWordBoundaries;
+saveOpts.useOddForInference    = useOddForInference;
+saveOpts.overwrite             = true;
+saveOpts.saveGammaPower        = true;
+outFiles = save_mit_group_outputs(sn_obj, params.SubjectName, taskType, taskConfig, outputDir, saveOpts);
+groupResultFile = outFiles.groupResultFile;
 
 
 %% ========================================================================
@@ -797,9 +670,9 @@ fprintf('Saved synced obj and sn_obj: %s\n', crunchedFile);
 
 
 %% ========================================================================
-% STEP 15: LANGLOC PDF REPORT
+% STEP 15: LANGLOC PDF REPORT (MITSWJNTask only)
 %% ========================================================================
-if generateLanglocReport
+if generateLanglocReport && strcmpi(taskType, 'MITSWJNTask')
     fprintf('\n=== STEP 15: LANGLOC PDF REPORT ===\n');
     try
         run_langloc_report(obj, taskType, taskConfig, outputDir, ...
@@ -813,7 +686,11 @@ if generateLanglocReport
         end
     end
 else
-    fprintf('\n=== STEP 15: LANGLOC PDF REPORT (skipped) ===\n');
+    if generateLanglocReport && ~strcmpi(taskType, 'MITSWJNTask')
+        fprintf('\n=== STEP 15: LANGLOC PDF REPORT (skipped; MITSWJNTask only) ===\n');
+    else
+        fprintf('\n=== STEP 15: LANGLOC PDF REPORT (skipped) ===\n');
+    end
 end
 
 %% ========================================================================
