@@ -17,27 +17,29 @@ function summary = run_naturalistic_pipeline(obj, allDataFiles, taskConfig, para
 %     .isPlotVisible          (default false)
 %     .doneVisualInspection   (default true)
 %     .preprocOrder           (default 'defaultSEEGorBOTH')
+%     .decimationFreq         (default 200)
 %     .saveBroadbandSegments  (default true)
 
-arguments
-    obj
-    allDataFiles {mustBeText}
-    taskConfig struct
-    params struct
-    outputDir (1,1) string
-    opts.crunchedFile (1,1) string
-    opts.forceReprocess (1,1) logical = false
-    opts.isPlotVisible (1,1) logical = false
-    opts.doneVisualInspection (1,1) logical = true
-    opts.preprocOrder (1,1) string = "defaultSEEGorBOTH"
-    opts.saveBroadbandSegments (1,1) logical = true
+if nargin < 6 || isempty(opts)
+    opts = struct();
+end
+if ~isfield(opts, 'crunchedFile') || isempty(opts.crunchedFile)
+    error('opts.crunchedFile is required.');
 end
 
 crunchedFile = char(opts.crunchedFile);
+forceReprocess = get_naturalistic_opt(opts, 'forceReprocess', false);
+isPlotVisible = get_naturalistic_opt(opts, 'isPlotVisible', false);
+doneVisualInspection = get_naturalistic_opt(opts, 'doneVisualInspection', true);
+preprocOrder = char(get_naturalistic_opt(opts, 'preprocOrder', 'defaultSEEGorBOTH'));
+decimationFreq = get_naturalistic_opt(opts, 'decimationFreq', 200);
+saveBroadbandSegments = get_naturalistic_opt(opts, 'saveBroadbandSegments', true);
+
+outputDir = char(outputDir);
 segmentDir = fullfile(outputDir, 'segments');
 rawSegmentDir = fullfile(outputDir, 'segments_raw');
 if ~exist(segmentDir, 'dir'); mkdir(segmentDir); end
-if opts.saveBroadbandSegments && ~exist(rawSegmentDir, 'dir')
+if saveBroadbandSegments && ~exist(rawSegmentDir, 'dir')
     mkdir(rawSegmentDir);
 end
 
@@ -48,18 +50,20 @@ save(crunchedFile, 'obj', 'naturalEvents', '-v7.3');
 
 %% Preprocess full recording (high-gamma envelope)
 fprintf('\n=== NATURALISTIC: PREPROCESS ===\n');
-needPreproc = opts.forceReprocess || ~isfield(obj.for_preproc, 'order') ...
+needPreproc = forceReprocess || ~isfield(obj.for_preproc, 'order') ...
     || isempty(obj.for_preproc.order);
 
 if needPreproc
-    fprintf('Preprocessing order: %s\n', opts.preprocOrder);
+    fprintf('Preprocessing order: %s\n', preprocOrder);
     fprintf('This may take a while for long naturalistic recordings...\n');
-    obj.preprocess_signal('order', char(opts.preprocOrder), ...
-        'isPlotVisible', opts.isPlotVisible, ...
-        'doneVisualInspection', opts.doneVisualInspection);
+    obj.preprocess_signal('order', preprocOrder, ...
+        'isPlotVisible', isPlotVisible, ...
+        'doneVisualInspection', doneVisualInspection);
 else
     fprintf('Preprocessing already present; skipping.\n');
 end
+
+obj = ensure_naturalistic_hg_ready(obj, decimationFreq);
 
 fprintf('Unipolar: [%d x %d] | Bipolar: [%d x %d] | Fs: %.1f Hz | Duration: %.1f s\n', ...
     size(obj.elec_data, 1), size(obj.elec_data, 2), ...
@@ -71,7 +75,9 @@ save(crunchedFile, 'obj', 'naturalEvents', '-v7.3');
 %% Optional broadband signal for raw segment export
 bb_elec_data = [];
 bb_bip_elec_data = [];
-if opts.saveBroadbandSegments
+bb_sample_freq = obj.sample_freq;
+hg_sample_freq = obj.sample_freq;
+if saveBroadbandSegments
     fprintf('\n=== NATURALISTIC: BROADBAND SIGNAL ===\n');
 
     hg_elec_data = obj.elec_data;
@@ -84,7 +90,7 @@ if opts.saveBroadbandSegments
     saved_user_chans = obj.elec_ch_user_deselect;
     saved_prelim_chans = obj.elec_ch_prelim_deselect;
 
-    obj.first_step('doneVisualInspection', opts.doneVisualInspection);
+    obj.first_step('doneVisualInspection', doneVisualInspection);
     obj.elec_ch_with_IED = saved_IED_chans;
     obj.elec_ch_with_noise = saved_noise_chans;
     obj.elec_ch_user_deselect = saved_user_chans;
@@ -97,10 +103,11 @@ if opts.saveBroadbandSegments
     obj.elec_ch_with_noise = saved_noise_chans;
     obj.define_clean_channels();
     obj.reference_signal('doCAR', true, 'doBipolarReferencing', true);
-    obj.downsample_signal();
+    obj.downsample_signal('decimationFreq', decimationFreq);
 
     bb_elec_data = obj.elec_data;
     bb_bip_elec_data = obj.bip_elec_data;
+    bb_sample_freq = obj.sample_freq;
 
     obj.elec_data = hg_elec_data;
     obj.bip_elec_data = hg_bip_elec_data;
@@ -254,15 +261,29 @@ for s = 1:nSegments
     segmentFiles{s} = hgPath;
     fprintf('  [HG] %s\n', hgFilename);
 
-    if opts.saveBroadbandSegments
+    if saveBroadbandSegments
+        bbStart = map_samples_between_rates(startSample, hg_sample_freq, bb_sample_freq);
+        bbEnd = map_samples_between_rates(endSample, hg_sample_freq, bb_sample_freq);
+        bbEnd = min(bbEnd, size(bb_elec_data, 2));
+        if bbEnd < bbStart
+            warning('Segment %d (%s): broadband range empty after rate mapping.', s, segmentName);
+            bbStart = min(bbStart, size(bb_elec_data, 2));
+            bbEnd = bbStart;
+        end
+
         rawSegment = meta;
         rawSegment.signalType = 'broadband_raw';
-        rawSegment.elec_data = bb_elec_data(:, startSample:endSample);
+        rawSegment.sample_freq = bb_sample_freq;
+        rawSegment.startSample = bbStart;
+        rawSegment.endSample = bbEnd;
+        rawSegment.markerSample = map_samples_between_rates(markerSample, hg_sample_freq, bb_sample_freq);
+        rawSegment.actualDuration = (bbEnd - bbStart + 1) / bb_sample_freq;
+        rawSegment.elec_data = bb_elec_data(:, bbStart:bbEnd);
         rawSegment.elec_ch_label = obj.elec_ch_label;
         rawSegment.elec_ch_clean = obj.elec_ch_clean;
         rawSegment.elec_ch_type = obj.elec_ch_type;
         if ~isempty(bb_bip_elec_data)
-            rawSegment.bip_elec_data = bb_bip_elec_data(:, startSample:endSample);
+            rawSegment.bip_elec_data = bb_bip_elec_data(:, bbStart:bbEnd);
             rawSegment.bip_ch_label = obj.bip_ch_label;
             rawSegment.bip_ch = obj.bip_ch;
         else
@@ -319,9 +340,33 @@ save(crunchedFile, 'obj', 'naturalEvents', 'summary', '-v7.3');
 
 fprintf('Summary saved: %s\n', summaryFile);
 fprintf('Segment directory: %s\n', segmentDir);
-if opts.saveBroadbandSegments
+if saveBroadbandSegments
     fprintf('Broadband segment directory: %s\n', rawSegmentDir);
 end
+end
+
+function obj = ensure_naturalistic_hg_ready(obj, decimationFreq)
+order = {};
+if isfield(obj.for_preproc, 'order') && ~isempty(obj.for_preproc.order)
+    order = obj.for_preproc.order;
+end
+
+if ~any(strcmp(order, 'GaussianFilterExtraction'))
+    fprintf('Naturalistic: extracting high-gamma envelope...\n');
+    obj.extract_high_gamma('doNapLabFilterExtraction', true);
+end
+
+if abs(obj.sample_freq - decimationFreq) > 0.1
+    fprintf('Naturalistic: downsampling HG to %d Hz...\n', decimationFreq);
+    obj.downsample_signal('decimationFreq', decimationFreq);
+end
+end
+
+function sample = map_samples_between_rates(sample, srcFs, tgtFs)
+if abs(srcFs - tgtFs) <= 0.1
+    return;
+end
+sample = max(1, round((sample - 1) * tgtFs / srcFs) + 1);
 end
 
 function naturalEvents = adjust_natural_events_for_decimation(obj, naturalEvents)
@@ -396,4 +441,12 @@ if ~isempty(rawSegmentFiles) && ~isempty(rawSegmentFiles{1})
 end
 
 fprintf(fid, '\nSource file: %s\n', summary.crunchedFile);
+end
+
+function val = get_naturalistic_opt(opts, name, defaultVal)
+if isfield(opts, name) && ~isempty(opts.(name))
+    val = opts.(name);
+else
+    val = defaultVal;
+end
 end

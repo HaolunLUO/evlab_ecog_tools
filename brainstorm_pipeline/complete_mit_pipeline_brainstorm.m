@@ -81,7 +81,7 @@ decimationFreq = 200;                            % Hz, for downsample_signal
 detectSharpArtifacts = true;                    % optional sharp-transient QC after z-scoring
 
 % --- Naturalistic (long-form NA/NA2/NA3 segmentation; see MITNatural.m) ---
-naturalisticPreprocOrder    = 'defaultSEEGorBOTH';  % full HG chain in one preprocess_signal call
+naturalisticPreprocOrder    = 'defaultSEEGorBOTH';  % HG envelope + downsample in preprocess_signal
 saveNaturalisticBroadband   = true;                 % also save broadband-referenced segments
 % Override segment durations per subject after get_mit_task_config (seconds):
 % taskConfig.segmentDurations.NA  = 564.9824;
@@ -351,6 +351,7 @@ if strcmpi(taskType, 'Naturalistic')
         'isPlotVisible', isPlotVisible, ...
         'doneVisualInspection', doneVisualInspection, ...
         'preprocOrder', naturalisticPreprocOrder, ...
+        'decimationFreq', decimationFreq, ...
         'saveBroadbandSegments', saveNaturalisticBroadband);
     summary = run_naturalistic_pipeline(obj, allDataFiles, taskConfig, params, outputDir, natOpts);
 
