@@ -37,7 +37,7 @@ switch taskType
         taskConfig.J_condition = 'JABBERWOCKY';
         taskConfig.testWords   = 1:8;
         taskConfig.subAverage  = false;
-        taskConfig.addFixationRow = true;
+        taskConfig.addFixationRow = false;
         taskConfig.fixationDuration = 0.5;
 
     case 'Auditory'
@@ -74,6 +74,25 @@ switch taskType
         taskConfig.conditionMap = containers.Map({'hard', 'easy'}, {'Hard', 'Easy'});
         taskConfig.S_condition = 'Hard';
         taskConfig.N_condition = 'Easy';
+        taskConfig.W_condition = '';
+        taskConfig.J_condition = '';
+        taskConfig.testWords   = 1;
+        taskConfig.subAverage  = false;
+
+    case 'Naturalistic'
+        taskConfig = struct();
+        taskConfig.markers = {'NA', 'NA2', 'NA3'};
+        taskConfig.segmentDurations = struct( ...
+            'NA', 564.9824, ...
+            'NA2', 642.6646, ...
+            'NA3', 643.703);
+        taskConfig.preBuffer  = 0;
+        taskConfig.postBuffer = 0;
+        taskConfig.segmentMode = 'duration';  % 'duration' | 'nextmarker'
+        taskConfig.nWordPositions = 1;
+        taskConfig.wordDuration   = 1;
+        taskConfig.S_condition = '';
+        taskConfig.N_condition = '';
         taskConfig.W_condition = '';
         taskConfig.J_condition = '';
         taskConfig.testWords   = 1;

@@ -7,8 +7,10 @@ function test_sig_channels_cross_task()
 %     1) Load source-task sn_obj and read sig channels (s_vs_n or wordwise).
 %     2) Load target-task sn_obj for the same subject.
 %     3) Match channels by label (case/punctuation insensitive).
-%     4) Compute Spearman rho and mean HG difference for the target contrast.
-%     5) Bar-plot averaged z-scored high-gamma power per target condition
+%     4) For bipolar, optionally require >=1 contact with grey-matter prob > threshold
+%        (from <anatomyDir>/<Subject>.tsv: tissues_cat12, tissues_cat12_prob).
+%     5) Compute Spearman rho and mean HG difference for the target contrast.
+%     6) Bar-plot averaged z-scored high-gamma power per target condition
 %        (grand average across source-sig matched channels).
 %
 %   Requires finished crunched files from complete_mit_pipeline_brainstorm:
@@ -21,12 +23,18 @@ function test_sig_channels_cross_task()
 repoRoot     = fileparts(fileparts(mfilename('fullpath')));
 workingDir   = 'F:\seeg\luohong\analysisEV';
 
-sourceTask   = 'MITSWJNTask';   % task used to define sig channels
+sourceTask   = 'WM';   % task used to define sig channels
 targetTasks  = {'vWM','Math','WM','MSIT','vMSIT','MITSWJNTask'};  % tasks whose conditions are tested
 
 subjects     = {'Subject12'};              % {} -> auto-discover from source task files
 signalType   = 'bipolar';       % 'bipolar' | 'unipolar'
 sigSource    = 's_vs_n';        % 's_vs_n' | 'wordwise'
+
+% Bipolar only: keep channels with >=1 contact grey-matter prob > threshold
+% Uses <anatomyDir>/<Subject>.tsv (tissues_cat12, tissues_cat12_prob)
+requireGreyMatter  = true;
+minGreyMatterProb  = 0.5;
+anatomyDir         = workingDir;   % e.g. F:\seeg\luohong\analysisEV\Subject12.tsv
 
 % Override target contrast (leave '' to use get_mit_task_config defaults)
 targetS_condition = struct();   % e.g. targetS_condition.WM = 'Hard'
@@ -60,6 +68,10 @@ end
 
 fprintf('\n=== CROSS-TASK SIG CHANNEL TEST ===\n');
 fprintf('Source task:  %s (%s, %s)\n', sourceTask, signalType, sigSource);
+if strcmpi(signalType, 'bipolar') && requireGreyMatter
+    fprintf('GM filter:    bipolar, min contact prob > %.2f (TSV in %s)\n', ...
+        minGreyMatterProb, anatomyDir);
+end
 fprintf('Target tasks: %s\n', strjoin(targetTasks, ', '));
 fprintf('Subjects:     %s\n', strjoin(subjects, ', '));
 fprintf('Output:       %s\n', outputDir);
@@ -89,11 +101,39 @@ for s = 1:numel(subjects)
     end
 
     srcLabels = channel_labels(snSrc, signalType);
+    if strcmpi(signalType, 'bipolar') && requireGreyMatter
+        try
+            [gmMaskSrc, gmProbSrc] = get_grey_matter_channel_mask(snSrc, signalType, ...
+                minGreyMatterProb, 'subject', subj, 'anatomyDir', anatomyDir);
+        catch ME
+            warning('Skipping %s: %s', subj, ME.message);
+            continue;
+        end
+        if all(isnan(gmProbSrc))
+            warning('Skipping %s: no grey-matter probabilities matched in %s', subj, ...
+                fullfile(anatomyDir, [subj '.tsv']));
+            continue;
+        end
+        if ~any(gmMaskSrc)
+            warning('Skipping %s: no bipolar channels pass grey-matter filter (min prob %.2f)', ...
+                subj, minGreyMatterProb);
+            continue;
+        end
+    else
+        gmMaskSrc = true(numel(sigMaskSrc), 1);
+        gmProbSrc = nan(numel(sigMaskSrc), 1);
+    end
+
     srcContrast = compute_task_contrast(snSrc, sourceCfg, signalType, srcLabels);
     nSigSrc = sum(sigMaskSrc);
+    nGmSrc = sum(gmMaskSrc);
+    nSigGmSrc = sum(sigMaskSrc & gmMaskSrc);
 
-    fprintf('  Source %s: %d / %d sig channels | %s\n', ...
-        sourceTask, nSigSrc, numel(sigMaskSrc), metaSrc.file);
+    fprintf('  Source %s: %d / %d sig channels', sourceTask, nSigSrc, numel(sigMaskSrc));
+    if strcmpi(signalType, 'bipolar') && requireGreyMatter
+        fprintf(' | GM pass %d / %d (%d sig+GM)', nGmSrc, numel(gmMaskSrc), nSigGmSrc);
+    end
+    fprintf(' | %s\n', metaSrc.file);
 
     for t = 1:numel(targetTasks)
         tgtTask = targetTasks{t};
@@ -114,13 +154,14 @@ for s = 1:numel(subjects)
         tgtContrast = compute_task_contrast(snTgt, tgtCfg, signalType, tgtLabels, ...
             'condA', condA, 'condB', condB);
 
-        nMatched = sum(matchedMask);
-        nMatchedSig = sum(matchedMask & sigMaskSrc);
+        validSrcMask = matchedMask & gmMaskSrc;
+        nMatched = sum(validSrcMask);
+        nMatchedSig = sum(validSrcMask & sigMaskSrc);
         fprintf('  -> %s: matched %d channels (%d source-sig) | contrast %s vs %s\n', ...
             tgtTask, nMatched, nMatchedSig, condA, condB);
 
         for ci = 1:numel(srcLabels)
-            if ~matchedMask(ci)
+            if ~validSrcMask(ci)
                 continue;
             end
             ti = matchIdx(ci);
@@ -132,6 +173,8 @@ for s = 1:numel(subjects)
             row.source_ch_idx = ci;
             row.target_ch_idx = ti;
             row.source_sig = logical(sigMaskSrc(ci));
+            row.gm_pass = logical(gmMaskSrc(ci));
+            row.gm_prob_max = gmProbSrc(ci);
             row.source_rho = srcContrast.rho(ci);
             row.source_mean_diff = srcContrast.mean_diff(ci);
             row.target_rho = tgtContrast.rho(ti);
@@ -143,15 +186,15 @@ for s = 1:numel(subjects)
             allRows = [allRows; row]; %#ok<AGROW>
         end
 
-        subSum = summarize_subject_contrast(allRows, subj, tgtTask, sigMaskSrc, matchedMask);
+        subSum = summarize_subject_contrast(allRows, subj, tgtTask, sigMaskSrc, validSrcMask);
         subjectSummaries = [subjectSummaries; subSum]; %#ok<AGROW>
 
         key = matlab.lang.makeValidName(sprintf('%s_%s', subj, tgtTask));
         statsOut.(key) = group_compare_channels(allRows, subj, tgtTask, compareGroup);
 
         tgtConds = available_task_conditions(snTgt, tgtCfg);
-        sigChanTgt = matchIdx(matchedMask & sigMaskSrc);
-        nonsigChanTgt = matchIdx(matchedMask & ~sigMaskSrc);
+        sigChanTgt = matchIdx(validSrcMask & sigMaskSrc);
+        nonsigChanTgt = matchIdx(validSrcMask & ~sigMaskSrc);
         [hgSig, hgSigSem] = mean_hg_by_condition(snTgt, tgtCfg, signalType, sigChanTgt, tgtConds);
         [hgNon, hgNonSem] = mean_hg_by_condition(snTgt, tgtCfg, signalType, nonsigChanTgt, tgtConds);
 
@@ -209,7 +252,8 @@ for t = 1:numel(targetTasks)
         group_compare_channels(allRows, '', tgtTask, compareGroup);
 end
 save(fullfile(outputDir, 'cross_task_stats.mat'), 'statsOut', 'groupStats', 'allRows', ...
-    'groupBarRows', 'sourceTask', 'targetTasks', 'signalType', 'sigSource', 'compareGroup');
+    'groupBarRows', 'sourceTask', 'targetTasks', 'signalType', 'sigSource', 'compareGroup', ...
+    'requireGreyMatter', 'minGreyMatterProb', 'anatomyDir');
 
 print_group_summary(groupStats, targetTasks);
 

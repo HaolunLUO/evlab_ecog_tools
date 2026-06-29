@@ -26,6 +26,7 @@
 %   A) Run once with taskType='MITSWJNTask' -> defines and saves ROI
 %   B) Run with taskType='WM'        -> plots MITSWJNTask ROI on WM data
 %   C) Run with taskType='Auditory'  -> plots MITSWJNTask ROI on Auditory
+%   D) Run with taskType='Naturalistic' -> segment NA/NA2/NA3 long recordings
 %
 % MATLAB PATH REQUIREMENTS
 %   addpath(genpath('<repo>'))                      % evlab_ecog_tools (incl. brainstorm_pipeline)
@@ -55,7 +56,7 @@ addpath(genpath(fullfile(repoRoot, 'ieeg_pipeline-master', 'ieeg_pipeline-master
 %% ========================================================================
 % USER SETTINGS
 %% ========================================================================
-taskType = 'MITSWJNTask';  % 'MITSWJNTask' | 'WM' | 'vWM' | 'Math' | 'MSIT' | 'vMSIT' | 'Auditory' | 'MITLangloc'
+taskType = 'MITSWJNTask';  % 'MITSWJNTask' | 'WM' | 'vWM' | 'Math' | 'MSIT' | 'vMSIT' | 'Auditory' | 'MITLangloc' | 'Naturalistic'
 
 % --- Cross-task ROI ---
 useROIfromSource = false;
@@ -63,7 +64,7 @@ roiSourceTask    = 'MITSWJNTask';
 
 % --- Re-run control ---
 forceRebuildCrunched = false;
-forceReprocess       = false;
+forceReprocess       = true;
 
 % --- UI control ---
 isPlotVisible        = false;
@@ -78,6 +79,14 @@ doneVisualInspection = true;
 preprocOrder   = 'defaultSEEGorBOTHBroadBand';  % highpass,notch,IED,CAR,Laplacian,bipolar (no envelope)
 decimationFreq = 200;                            % Hz, for downsample_signal
 detectSharpArtifacts = true;                    % optional sharp-transient QC after z-scoring
+
+% --- Naturalistic (long-form NA/NA2/NA3 segmentation; see MITNatural.m) ---
+naturalisticPreprocOrder    = 'defaultSEEGorBOTH';  % full HG chain in one preprocess_signal call
+saveNaturalisticBroadband   = true;                 % also save broadband-referenced segments
+% Override segment durations per subject after get_mit_task_config (seconds):
+% taskConfig.segmentDurations.NA  = 564.9824;
+% taskConfig.segmentDurations.NA2 = 642.6646;
+% taskConfig.segmentDurations.NA3 = 643.703;
 
 % --- Language channel selection / statistics (ecog_MITLangloc-master features) ---
 % Split-half cross-validation: odd trials drive selection (inference), even
@@ -96,8 +105,8 @@ wordBoundaryEpoch    = [-0.25 0.25];
 
 % --- Langloc PDF report (MITSWJNTask only) ---
 % Requires MATLAB Report Generator (mlreportgen). Saves PDF to output/MITSWJNTask/.
-generateLanglocReport = true;
-useLanglocReportV2    = true;  % v2: includes LangLoc Responsive Electrodes chapter
+generateLanglocReport = false;
+useLanglocReportV2    = false;  % v2: includes LangLoc Responsive Electrodes chapter
 
 % --- Behavioral log (MITSWJNTask only; for PDF performance metrics) ---
 % CSV/table with accuracy + RT (seconds), or response + probe columns.
@@ -149,6 +158,10 @@ switch taskType
             'D:\seeg\analysis\data\Subject06\DA010035\data_block001_12.mat'
             'D:\seeg\analysis\data\Subject06\DA010035\data_block001_13.mat'
         };
+    case 'Naturalistic'
+        allDataFiles = {
+            'F:\seeg\analysis\data\Subject10\DA0011V2\data_block001_05.mat'  % EDIT: naturalistic data
+        };
     otherwise
         allDataFiles = {
             'D:\seeg\analysis\data\Subject03\DA01001N\data_block001_08.mat'
@@ -161,6 +174,13 @@ end
 % STEP 0: TASK CONFIGURATION
 %% ========================================================================
 taskConfig = get_mit_task_config(taskType);
+
+% Optional per-subject overrides for naturalistic segment durations (seconds).
+if strcmpi(taskType, 'Naturalistic')
+    % taskConfig.segmentDurations.NA  = 564.9824;
+    % taskConfig.segmentDurations.NA2 = 642.6646;
+    % taskConfig.segmentDurations.NA3 = 643.703;
+end
 
 params.nWordPositions = taskConfig.nWordPositions;
 params.wordDuration   = taskConfig.wordDuration;
@@ -314,6 +334,37 @@ if ~isfield(obj, 'anatomy') || isempty(obj.anatomy)
     end
 else
     fprintf('Anatomy already present.\n');
+end
+
+
+%% ========================================================================
+% NATURALISTIC BRANCH (segment long-form NA/NA2/NA3 recordings)
+%% ========================================================================
+if strcmpi(taskType, 'Naturalistic')
+    fprintf('\n=== NATURALISTIC PIPELINE ===\n');
+    fprintf('Markers: %s\n', strjoin(taskConfig.markers, ', '));
+    fprintf('Segment mode: %s\n', taskConfig.segmentMode);
+
+    natOpts = struct( ...
+        'crunchedFile', crunchedFile, ...
+        'forceReprocess', forceReprocess, ...
+        'isPlotVisible', isPlotVisible, ...
+        'doneVisualInspection', doneVisualInspection, ...
+        'preprocOrder', naturalisticPreprocOrder, ...
+        'saveBroadbandSegments', saveNaturalisticBroadband);
+    summary = run_naturalistic_pipeline(obj, allDataFiles, taskConfig, params, outputDir, natOpts);
+
+    fprintf('\n========================================\n');
+    fprintf('NATURALISTIC ANALYSIS COMPLETE\n');
+    fprintf('========================================\n');
+    fprintf('Subject: %s\n', params.SubjectName);
+    fprintf('Segments extracted: %d\n', summary.nSegments);
+    fprintf('HG segments: %s\n', fullfile(outputDir, 'segments'));
+    if saveNaturalisticBroadband
+        fprintf('Broadband segments: %s\n', summary.rawSegmentDir);
+    end
+    fprintf('Summary: %s\n', fullfile(outputDir, sprintf('%s_%s_summary.mat', params.SubjectName, taskType)));
+    return;
 end
 
 
