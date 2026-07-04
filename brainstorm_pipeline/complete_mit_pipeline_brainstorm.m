@@ -56,14 +56,14 @@ addpath(genpath(fullfile(repoRoot, 'ieeg_pipeline-master', 'ieeg_pipeline-master
 %% ========================================================================
 % USER SETTINGS
 %% ========================================================================
-taskType = 'MITSWJNTask';  % 'MITSWJNTask' | 'WM' | 'vWM' | 'Math' | 'MSIT' | 'vMSIT' | 'Auditory' | 'MITLangloc' | 'Naturalistic'
+taskType = 'Naturalistic';  % 'MITSWJNTask' | 'WM' | 'vWM' | 'Math' | 'MSIT' | 'vMSIT' | 'Auditory' | 'MITLangloc' | 'Naturalistic'
 
 % --- Cross-task ROI ---
 useROIfromSource = false;
 roiSourceTask    = 'MITSWJNTask';
 
 % --- Re-run control ---
-forceRebuildCrunched = false;
+forceRebuildCrunched = true;
 forceReprocess       = true;
 
 % --- UI control ---
@@ -81,8 +81,9 @@ decimationFreq = 200;                            % Hz, for downsample_signal
 detectSharpArtifacts = true;                    % optional sharp-transient QC after z-scoring
 
 % --- Naturalistic (long-form NA/NA2/NA3 segmentation; see MITNatural.m) ---
-naturalisticPreprocOrder    = 'defaultSEEGorBOTH';  % HG envelope + downsample in preprocess_signal
-saveNaturalisticBroadband   = true;                 % also save broadband-referenced segments
+naturalisticPreprocOrder    = 'defaultSEEGorBOTHBroadBand';  % same broadband chain as other tasks
+naturalisticDecimationFreq  = 500;                         % Hz; naturalistic uses 500, not decimationFreq
+saveNaturalisticBroadband   = true;                          % also save broadband-referenced segments
 % Override segment durations per subject after get_mit_task_config (seconds):
 % taskConfig.segmentDurations.NA  = 564.9824;
 % taskConfig.segmentDurations.NA2 = 642.6646;
@@ -122,7 +123,7 @@ anatomyPath = fullfile(workingDir, 'anatomy\');
 
 % --- Subject/protocol ---
 params = struct();
-params.SubjectName  = 'Subject12';
+params.SubjectName  = 'Subject01';
 params.ProtocolName = 'analysis';
 params.outputPath   = workingDir;
 params.taskType     = taskType;
@@ -135,7 +136,7 @@ switch taskType
         };
     case 'WM'
         allDataFiles = {
-            'F:\seeg\analysis\data\Subject12/DA0011X8/data_block001.mat'
+            'F:\seeg\analysis\data\Subject01/DA0011IJ/data_block001_07.mat'
         };
     case 'vWM'
         allDataFiles = {
@@ -153,14 +154,18 @@ switch taskType
         allDataFiles = {
             'F:\seeg\analysis\data\Subject12/DA0011XQ/data_block001_03.mat'  % EDIT: vMSIT task data
         };
-    case 'Auditory'
+    case 'Auditory_LAN'
         allDataFiles = {
-            'D:\seeg\analysis\data\Subject06\DA010035\data_block001_12.mat'
-            'D:\seeg\analysis\data\Subject06\DA010035\data_block001_13.mat'
+            'F:\seeg\analysis\data\Subject12/DA0011XQ/data_block001_07.mat'
+        };
+    case 'Auditory_SPEECH'
+        allDataFiles = {
+            'F:\seeg\analysis\data\Subject12/DA0011XQ/data_block001_07.mat'
         };
     case 'Naturalistic'
         allDataFiles = {
-            'F:\seeg\analysis\data\Subject10\DA0011V2\data_block001_05.mat'  % EDIT: naturalistic data
+            'F:\seeg\analysis\data\Subject01/DA0011IJ/data_block001_05.mat'  % EDIT: naturalistic data
+
         };
     otherwise
         allDataFiles = {
@@ -351,7 +356,7 @@ if strcmpi(taskType, 'Naturalistic')
         'isPlotVisible', isPlotVisible, ...
         'doneVisualInspection', doneVisualInspection, ...
         'preprocOrder', naturalisticPreprocOrder, ...
-        'decimationFreq', decimationFreq, ...
+        'decimationFreq', naturalisticDecimationFreq, ...
         'saveBroadbandSegments', saveNaturalisticBroadband);
     summary = run_naturalistic_pipeline(obj, allDataFiles, taskConfig, params, outputDir, natOpts);
 
@@ -404,14 +409,7 @@ fprintf('Unipolar: [%d x %d] | Bipolar: [%d x %d] | Fs: %.1f Hz\n', ...
 %% ========================================================================
 fprintf('\n=== STEP 5: CONDITION MAPPING ===\n');
 
-condMap = taskConfig.conditionMap;
-fprintf('Original conditions: %s\n', strjoin(unique(obj.condition), ', '));
-for i = 1:numel(obj.condition)
-    if isKey(condMap, obj.condition{i})
-        obj.condition{i} = condMap(obj.condition{i});
-    end
-end
-fprintf('Mapped conditions:   %s\n', strjoin(unique(obj.condition), ', '));
+[obj, taskConfig] = map_and_resolve_task_conditions(obj, taskConfig);
 
 
 %% ========================================================================

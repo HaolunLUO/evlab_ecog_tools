@@ -3,7 +3,7 @@ function summary = run_naturalistic_pipeline(obj, allDataFiles, taskConfig, para
 %
 %   Mirrors the workflow in MITNatural.m:
 %     1) Extract NA/NA2/NA3 markers from Brainstorm exports
-%     2) Preprocess full recording (defaultSEEGorBOTH -> high-gamma envelope)
+%     2) Broadband preprocess (defaultSEEGorBOTHBroadBand), NAPLAB HG, downsample
 %     3) Build a parallel broadband-referenced signal for raw segment export
 %     4) Cut HG + broadband segments and write summary files
 %
@@ -16,8 +16,8 @@ function summary = run_naturalistic_pipeline(obj, allDataFiles, taskConfig, para
 %     .forceReprocess         (default false)
 %     .isPlotVisible          (default false)
 %     .doneVisualInspection   (default true)
-%     .preprocOrder           (default 'defaultSEEGorBOTH')
-%     .decimationFreq         (default 200)
+%     .preprocOrder           (default 'defaultSEEGorBOTHBroadBand')
+%     .decimationFreq         (default 500)
 %     .saveBroadbandSegments  (default true)
 
 if nargin < 6 || isempty(opts)
@@ -31,8 +31,8 @@ crunchedFile = char(opts.crunchedFile);
 forceReprocess = get_naturalistic_opt(opts, 'forceReprocess', false);
 isPlotVisible = get_naturalistic_opt(opts, 'isPlotVisible', false);
 doneVisualInspection = get_naturalistic_opt(opts, 'doneVisualInspection', true);
-preprocOrder = char(get_naturalistic_opt(opts, 'preprocOrder', 'defaultSEEGorBOTH'));
-decimationFreq = get_naturalistic_opt(opts, 'decimationFreq', 200);
+preprocOrder = char(get_naturalistic_opt(opts, 'preprocOrder', 'defaultSEEGorBOTHBroadBand'));
+decimationFreq = get_naturalistic_opt(opts, 'decimationFreq', 500);
 saveBroadbandSegments = get_naturalistic_opt(opts, 'saveBroadbandSegments', true);
 
 outputDir = char(outputDir);
@@ -48,7 +48,7 @@ fprintf('\n=== NATURALISTIC: EXTRACT EVENTS ===\n');
 naturalEvents = extract_naturalistic_events(allDataFiles, taskConfig, obj);
 save(crunchedFile, 'obj', 'naturalEvents', '-v7.3');
 
-%% Preprocess full recording (high-gamma envelope)
+%% Preprocess: broadband referencing, HG extraction, downsample (same as STEP 4)
 fprintf('\n=== NATURALISTIC: PREPROCESS ===\n');
 needPreproc = forceReprocess || ~isfield(obj.for_preproc, 'order') ...
     || isempty(obj.for_preproc.order);
@@ -59,11 +59,16 @@ if needPreproc
     obj.preprocess_signal('order', preprocOrder, ...
         'isPlotVisible', isPlotVisible, ...
         'doneVisualInspection', doneVisualInspection);
-else
-    fprintf('Preprocessing already present; skipping.\n');
-end
 
-obj = ensure_naturalistic_hg_ready(obj, decimationFreq);
+    fprintf('Extracting high-gamma envelope (NAPLAB filterbank)...\n');
+    obj.extract_high_gamma('doNapLabFilterExtraction', true);
+
+    fprintf('Downsampling HG to %d Hz...\n', decimationFreq);
+    obj.downsample_signal('decimationFreq', decimationFreq);
+else
+    fprintf('Preprocessing already present; ensuring HG + downsample...\n');
+    obj = ensure_naturalistic_hg_ready(obj, decimationFreq);
+end
 
 fprintf('Unipolar: [%d x %d] | Bipolar: [%d x %d] | Fs: %.1f Hz | Duration: %.1f s\n', ...
     size(obj.elec_data, 1), size(obj.elec_data, 2), ...
@@ -346,12 +351,16 @@ end
 end
 
 function obj = ensure_naturalistic_hg_ready(obj, decimationFreq)
-order = {};
-if isfield(obj.for_preproc, 'order') && ~isempty(obj.for_preproc.order)
-    order = obj.for_preproc.order;
+if abs(obj.sample_freq - decimationFreq) <= 0.1
+    return;
 end
 
-if ~any(strcmp(order, 'GaussianFilterExtraction'))
+rawFs = obj.sample_freq;
+if isfield(obj.for_preproc, 'sample_freq_raw') && ~isempty(obj.for_preproc.sample_freq_raw)
+    rawFs = obj.for_preproc.sample_freq_raw;
+end
+
+if abs(obj.sample_freq - rawFs) <= 0.1
     fprintf('Naturalistic: extracting high-gamma envelope...\n');
     obj.extract_high_gamma('doNapLabFilterExtraction', true);
 end

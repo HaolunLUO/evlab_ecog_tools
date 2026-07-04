@@ -23,8 +23,8 @@ function test_sig_channels_cross_task()
 repoRoot     = fileparts(fileparts(mfilename('fullpath')));
 workingDir   = 'F:\seeg\luohong\analysisEV';
 
-sourceTask   = 'WM';   % task used to define sig channels
-targetTasks  = {'vWM','Math','WM','MSIT','vMSIT','MITSWJNTask'};  % tasks whose conditions are tested
+sourceTask   = 'Auditory_SPEECH';   % task used to define sig channels Auditory_SPEECH
+targetTasks  = {'Auditory_LAN'};  % tasks whose conditions are tested
 
 subjects     = {'Subject12'};              % {} -> auto-discover from source task files
 signalType   = 'bipolar';       % 'bipolar' | 'unipolar'

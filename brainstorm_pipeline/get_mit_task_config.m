@@ -40,19 +40,32 @@ switch taskType
         taskConfig.addFixationRow = false;
         taskConfig.fixationDuration = 0.5;
 
-    case 'Auditory'
+    case 'Auditory_LAN'
         taskConfig = struct();
         taskConfig.nWordPositions = 1;
-        taskConfig.wordDuration   = 18;
-        taskConfig.eventPattern   = '%s';
-        taskConfig.conditionMap = containers.Map({'Intact', 'Degraded'}, {'Intact', 'Degraded'});
-        taskConfig.S_condition = 'Intact';
-        taskConfig.N_condition = 'Degraded';
+        taskConfig.wordDuration   = 5;
+        taskConfig.eventPattern   = '%s_tp%d';
+        taskConfig.conditionMap = containers.Map({'sentence', 'nonword'}, {'Sentence', 'Nonword'});
+        taskConfig.S_condition = 'Sentence';
+        taskConfig.N_condition = 'Nonword';
         taskConfig.W_condition = '';
         taskConfig.J_condition = '';
         taskConfig.testWords   = 1;
-        taskConfig.subAverage  = true;
-
+        taskConfig.subAverage  = false;
+    
+    case 'Auditory_SPEECH'
+        taskConfig = struct();
+        taskConfig.nWordPositions = 1;
+        taskConfig.wordDuration   = 5;
+        taskConfig.eventPattern   = '%s_tp%d';
+        taskConfig.conditionMap = containers.Map({'quilt', 'nonword'}, {'Quilt', 'Nonword'});
+        taskConfig.S_condition = 'Nonword';
+        taskConfig.N_condition = 'Quilt';
+        taskConfig.W_condition = '';
+        taskConfig.J_condition = '';
+        taskConfig.testWords   = 1;
+        taskConfig.subAverage  = false;
+        
     case {'WM', 'Math', 'vWM'}
         taskConfig = struct();
         taskConfig.nWordPositions = 5;
